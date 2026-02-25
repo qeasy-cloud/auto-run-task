@@ -32,14 +32,16 @@ def render_prompt(template: str, task: dict) -> str:
     def _replace_key(match: re.Match) -> str:
         key = match.group(1).strip()
         value = task.get(key, "")
-        if isinstance(value, (dict, list)):
+        if isinstance(value, dict | list):
             return json.dumps(value, ensure_ascii=False, indent=2)
         return str(value)
 
     result = re.sub(r"\{\{(\w+)\}\}", _replace_key, result)
 
     # 2. Replace #item with the full task JSON
-    task_json = json.dumps(task, ensure_ascii=False, indent=2)
+    # Strip the "cli" key — it's internal runner config and can confuse AI models.
+    task_for_item = {k: v for k, v in task.items() if k != "cli"}
+    task_json = json.dumps(task_for_item, ensure_ascii=False, indent=2)
     result = result.replace("#item", task_json)
 
     return result

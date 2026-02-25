@@ -64,6 +64,22 @@ class TestRenderPromptItemPlaceholder:
         assert data["task_no"] == "T-1"
         assert data["task_name"] == "Fix login bug"
 
+    def test_item_strips_cli_field(self):
+        """'cli' config must be excluded from #item — it can confuse AI models."""
+        task = {**SIMPLE_TASK, "cli": {"tool": "copilot", "model": "claude-opus-4.6"}}
+        result = render_prompt("#item", task)
+        data = json.loads(result)
+        assert "cli" not in data
+        # Other fields must still be present
+        assert data["task_no"] == "T-1"
+
+    def test_item_without_cli_field_unaffected(self):
+        """Tasks without 'cli' should serialise normally."""
+        result = render_prompt("#item", SIMPLE_TASK)
+        data = json.loads(result)
+        assert "cli" not in data
+        assert data["task_no"] == "T-1"
+
     def test_item_appears_multiple_times(self):
         template = "#item\n---\n#item"
         result = render_prompt(template, SIMPLE_TASK)
