@@ -54,6 +54,9 @@ def _parse_v3_args(argv: list[str]) -> argparse.Namespace:
     # ── list ──
     _add_list_subparser(subparsers)
 
+    # ── reset ──
+    _add_reset_subparser(subparsers)
+
     # ── status ──
     _add_status_subparser(subparsers)
 
@@ -207,6 +210,13 @@ def _add_execution_options(parser):
         help="Heartbeat interval in seconds (default: 60)",
     )
     ctrl_group.add_argument(
+        "--delay",
+        default=None,
+        metavar="MIN-MAX",
+        help="Random delay between tasks in seconds, e.g. '60-120' (default). "
+        "Use '0' to disable, or a single number for fixed delay.",
+    )
+    ctrl_group.add_argument(
         "--git-safety",
         action="store_true",
         help="Check workspace git status and create safety tag before execution",
@@ -231,6 +241,58 @@ def _add_execution_options(parser):
         "--no-color",
         action="store_true",
         help="Disable color output (useful for CI/piped output)",
+    )
+
+
+def _add_reset_subparser(subparsers):
+    """Add the 'reset' subcommand."""
+    reset_parser = subparsers.add_parser(
+        "reset",
+        help="Reset task statuses to re-run tasks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  # Reset all failed tasks to not-started
+  %(prog)s FIX_CODE code-quality-fix --status failed
+
+  # Reset all tasks from F-3 onward
+  %(prog)s FIX_CODE code-quality-fix --from F-3
+
+  # Reset ALL tasks (full re-run)
+  %(prog)s FIX_CODE code-quality-fix --all
+
+  # Reset a specific batch
+  %(prog)s FIX_CODE code-quality-fix --all --batch 2
+""",
+    )
+    reset_parser.add_argument("project_name", help="Project name")
+    reset_parser.add_argument("task_set_name", help="Task set name (without .tasks.json)")
+
+    target_group = reset_parser.add_argument_group("target selection (at least one required)")
+    target_group.add_argument(
+        "--status",
+        choices=["failed", "completed", "interrupted", "in-progress"],
+        default=None,
+        help="Reset tasks matching this status",
+    )
+    target_group.add_argument(
+        "--from",
+        dest="start_from",
+        default=None,
+        metavar="TASK_NO",
+        help="Reset tasks from this task number onward (e.g. 'F-3')",
+    )
+    target_group.add_argument(
+        "--all",
+        action="store_true",
+        dest="reset_all",
+        help="Reset ALL tasks back to not-started",
+    )
+    target_group.add_argument(
+        "--batch",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Only reset tasks in batch N (combine with --all or --status)",
     )
 
 
@@ -303,9 +365,22 @@ def _parse_legacy_args(argv: list[str]) -> argparse.Namespace:
     ctrl_group.add_argument("--start", default=None, metavar="TASK_NO")
     ctrl_group.add_argument("--work-dir", default=None, metavar="DIR")
     ctrl_group.add_argument("--heartbeat", type=int, default=60, metavar="SEC")
+    ctrl_group.add_argument(
+        "--delay",
+        default=None,
+        metavar="MIN-MAX",
+        help="Random delay between tasks in seconds, e.g. '60-120' (default). "
+        "Use '0' to disable, or a single number for fixed delay.",
+    )
 
     args = parser.parse_args(argv)
     _validate_legacy_args(args, parser)
+
+    # Parse delay into a tuple so the legacy executor can read it directly
+    from .executor import parse_delay_range
+
+    args.delay_range = parse_delay_range(args.delay)
+
     args._legacy = True
     return args
 

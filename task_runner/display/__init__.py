@@ -27,6 +27,7 @@ from .core import (
 # ─── Utility messages ────────────────────────────────────────────
 from .messages import (
     show_available_models,
+    show_delay,
     show_error,
     show_force_exit,
     show_info,
@@ -85,6 +86,7 @@ __all__ = [
     "show_banner",
     "show_banner_v3",
     "show_dry_run_skip",
+    "show_delay",
     # Messages
     "show_error",
     "show_force_exit",

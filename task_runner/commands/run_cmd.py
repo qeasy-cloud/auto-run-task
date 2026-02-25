@@ -176,7 +176,9 @@ def _execute(args, dry_run: bool = False) -> int:
     git_safety = getattr(args, "git_safety", False)
 
     # ── Create executor and run ──
-    from ..executor import TaskExecutor
+    from ..executor import TaskExecutor, parse_delay_range
+
+    delay_range = parse_delay_range(getattr(args, "delay", None))
 
     executor = TaskExecutor(
         project_config=config,
@@ -193,6 +195,7 @@ def _execute(args, dry_run: bool = False) -> int:
         git_safety=git_safety,
         verbose=verbose,
         quiet=quiet,
+        delay_range=delay_range,
     )
 
     result_code = executor.run()

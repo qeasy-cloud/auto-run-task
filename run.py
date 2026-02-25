@@ -72,6 +72,11 @@ def main():
 
             sys.exit(handle_dryrun(args))
 
+        elif command == "reset":
+            from task_runner.commands.reset_cmd import handle_reset
+
+            sys.exit(handle_reset(args))
+
         elif command == "list":
             from task_runner.commands.list_cmd import handle_list
 

@@ -34,6 +34,24 @@ def show_force_exit():
     console.print("\n[bold red]❌ Force exit! (double CTRL+C)[/bold red]")
 
 
+def show_delay(seconds: int, task_no_next: str = ""):
+    """Display a countdown for the anti-detection delay between tasks."""
+    import time as _time
+
+    if seconds <= 0:
+        return
+
+    label = f"next: {task_no_next}" if task_no_next else "next task"
+    for remaining in range(seconds, 0, -1):
+        console.print(
+            f"\r  [dim]⏳ Waiting {remaining}s before {label} (anti-rate-limit)...[/dim]",
+            end="",
+        )
+        _time.sleep(1)
+    # Clear the countdown line
+    console.print(f"\r  [dim]⏳ Delay complete, resuming execution.{' ' * 40}[/dim]")
+
+
 def show_tool_not_found(tool_name: str):
     """Display tool-not-found error with help."""
     console.print(

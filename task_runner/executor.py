@@ -16,6 +16,7 @@ import contextlib
 import errno
 import json
 import os
+import random
 import re
 import select
 import shutil
@@ -28,6 +29,53 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import PROXY_ENV_KEYS, ToolConfig, get_tool_config
+
+# Any AI CLI execution completing in under this threshold is treated as a
+# failure (the tool almost certainly did not actually process the task).
+MIN_EXECUTION_SECONDS = 10
+
+
+# ─── Delay Range Parser ─────────────────────────────────────────
+
+
+def parse_delay_range(value: str | None) -> tuple[int, int]:
+    """Parse a ``--delay`` CLI value into a (min, max) seconds tuple.
+
+    Accepted formats:
+      - ``None``      → ``(60, 120)``  (default)
+      - ``"0"``       → ``(0, 0)``     (disabled)
+      - ``"30"``      → ``(30, 30)``   (fixed delay)
+      - ``"60-120"``  → ``(60, 120)``  (random range)
+    """
+    if value is None:
+        return (60, 120)
+
+    value = value.strip()
+    if value == "0":
+        return (0, 0)
+
+    if "-" in value:
+        parts = value.split("-", 1)
+        try:
+            lo, hi = int(parts[0]), int(parts[1])
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"Invalid delay range '{value}'. Use '60-120', '30', or '0'."
+            )
+        if lo < 0 or hi < 0:
+            raise argparse.ArgumentTypeError("Delay values must be non-negative.")
+        return (min(lo, hi), max(lo, hi))
+
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid delay value '{value}'. Use '60-120', '30', or '0'."
+        )
+    if n < 0:
+        raise argparse.ArgumentTypeError("Delay value must be non-negative.")
+    return (n, n)
+
 
 # ─── Log Sanitization Patterns ───────────────────────────────────
 
@@ -132,6 +180,7 @@ from .display import (
     show_all_done,
     show_available_models,
     show_banner,
+    show_delay,
     show_dry_run_skip,
     show_error,
     show_force_exit,
@@ -218,6 +267,7 @@ class TaskExecutor:
         self.git_safety: bool = kwargs.get("git_safety", False)
         self.verbose: bool = kwargs.get("verbose", False)
         self.quiet: bool = kwargs.get("quiet", False)
+        self.delay_range: tuple[int, int] = kwargs.get("delay_range", (60, 120))
 
         self.work_dir = Path(self.workspace) if self.workspace else None
 
@@ -235,6 +285,7 @@ class TaskExecutor:
         self.heartbeat_interval: int = args.heartbeat  # type: ignore[no-redef]
 
         self.work_dir: Path | None = args.work_dir_path  # type: ignore[no-redef]
+        self.delay_range: tuple[int, int] = getattr(args, "delay_range", (60, 120))  # type: ignore[no-redef]
         self.project_dir: Path | None = None
         self.tasks_dir: Path | None = None
         self.logs_dir: Path | None = None
@@ -401,6 +452,45 @@ class TaskExecutor:
         if m:
             cmd = cmd.replace("{model}", m)
         return cmd
+
+    # ─── Inter-task Delay (Anti-Rate-Limit) ───────────────────
+
+    def _inter_task_delay(self, current_idx: int, remaining_tasks):
+        """Wait a random duration between tasks to look more human.
+
+        Skips delay if:
+          - delay_range is (0, 0)  (explicitly disabled)
+          - this is the last task
+          - execution was interrupted
+          - dry-run mode
+        """
+        if self.dry_run or self.interrupted:
+            return
+        lo, hi = self.delay_range
+        if lo == 0 and hi == 0:
+            return
+
+        # Don't delay after the last task
+        has_more = False
+        if isinstance(remaining_tasks, list) and len(remaining_tasks) > 0:
+            has_more = True
+        elif hasattr(remaining_tasks, '__len__'):
+            has_more = current_idx + 1 < len(remaining_tasks)
+        if not has_more:
+            return
+
+        delay = random.randint(lo, max(lo, hi))
+
+        # Peek at next task_no for display
+        next_label = ""
+        try:
+            if isinstance(remaining_tasks, list) and len(remaining_tasks) > 0:
+                nxt = remaining_tasks[0]
+                next_label = nxt.task_no if hasattr(nxt, 'task_no') else nxt.get('task_no', '')
+        except (IndexError, TypeError, AttributeError):
+            pass
+
+        show_delay(delay, next_label)
 
     # ─── Heartbeat ───────────────────────────────────────────────
 
@@ -812,6 +902,16 @@ class TaskExecutor:
 
             # Record result
             success = return_code == 0
+
+            # Guard: AI CLI finishing in < MIN_EXECUTION_SECONDS is bogus
+            if success and elapsed < MIN_EXECUTION_SECONDS:
+                show_warning(
+                    f"Task {task_no} completed in {elapsed:.1f}s "
+                    f"(< {MIN_EXECUTION_SECONDS}s minimum) — marking as FAILED. "
+                    f"The AI CLI likely did not process the task."
+                )
+                success = False
+
             if success:
                 task.status = "completed"
                 succeeded += 1
@@ -853,6 +953,9 @@ class TaskExecutor:
 
             # Update live status after result
             save_live_status(self.run_context, None, dict(self._results), list(self._task_results))
+
+            # Random delay between tasks (anti-rate-limit)
+            self._inter_task_delay(idx, tasks[idx + 1:])
 
         # Cleanup
         reset_terminal_title()
@@ -1012,6 +1115,16 @@ class TaskExecutor:
                 break
 
             success = return_code == 0
+
+            # Guard: AI CLI finishing in < MIN_EXECUTION_SECONDS is bogus
+            if success and elapsed < MIN_EXECUTION_SECONDS:
+                show_warning(
+                    f"Task {task_no} completed in {elapsed:.1f}s "
+                    f"(< {MIN_EXECUTION_SECONDS}s minimum) — marking as FAILED. "
+                    f"The AI CLI likely did not process the task."
+                )
+                success = False
+
             if success:
                 task["status"] = "completed"
                 succeeded += 1
@@ -1033,6 +1146,10 @@ class TaskExecutor:
 
             current_done = sum(1 for t in tasks if t.get("status") == "completed")
             show_progress_bar(current_done, total)
+
+            # Random delay between tasks (anti-rate-limit)
+            remaining_tasks = [t for t in tasks[idx + 1:] if t.get("status") != "completed"]
+            self._inter_task_delay(idx, remaining_tasks)
 
         reset_terminal_title()
 
