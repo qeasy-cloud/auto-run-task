@@ -35,21 +35,32 @@ def show_force_exit():
 
 
 def show_delay(seconds: int, task_no_next: str = ""):
-    """Display a countdown for the anti-detection delay between tasks."""
+    """Display a countdown for the anti-detection delay between tasks.
+
+    Note: The main countdown loop lives in ``TaskExecutor._inter_task_delay``
+    so it can check ``self.interrupted`` each tick.  This function is kept as a
+    simple helper for any standalone usage.
+    """
+    import sys
     import time as _time
 
     if seconds <= 0:
         return
 
     label = f"next: {task_no_next}" if task_no_next else "next task"
-    for remaining in range(seconds, 0, -1):
-        console.print(
-            f"\r  [dim]⏳ Waiting {remaining}s before {label} (anti-rate-limit)...[/dim]",
-            end="",
-        )
-        _time.sleep(1)
-    # Clear the countdown line
-    console.print(f"\r  [dim]⏳ Delay complete, resuming execution.{' ' * 40}[/dim]")
+    try:
+        for remaining in range(seconds, 0, -1):
+            sys.stdout.write(
+                f"\r  ⏳ Waiting {remaining}s before {label} (anti-rate-limit)..."
+            )
+            sys.stdout.flush()
+            _time.sleep(1)
+        sys.stdout.write(f"\r  ⏳ Delay complete, resuming execution.{' ' * 40}\n")
+        sys.stdout.flush()
+    except KeyboardInterrupt:
+        sys.stdout.write(f"\r  ⏳ Delay interrupted.{' ' * 50}\n")
+        sys.stdout.flush()
+        raise
 
 
 def show_tool_not_found(tool_name: str):

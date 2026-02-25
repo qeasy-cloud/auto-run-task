@@ -455,7 +455,7 @@ class TaskExecutor:
 
     # ─── Inter-task Delay (Anti-Rate-Limit) ───────────────────
 
-    def _inter_task_delay(self, current_idx: int, remaining_tasks):
+    def _inter_task_delay(self, current_idx: int, remaining_tasks, *, last_success: bool = True):
         """Wait a random duration between tasks to look more human.
 
         Skips delay if:
@@ -463,8 +463,11 @@ class TaskExecutor:
           - this is the last task
           - execution was interrupted
           - dry-run mode
+          - previous task failed (no point waiting — didn't hit the AI service meaningfully)
         """
         if self.dry_run or self.interrupted:
+            return
+        if not last_success:
             return
         lo, hi = self.delay_range
         if lo == 0 and hi == 0:
@@ -490,7 +493,24 @@ class TaskExecutor:
         except (IndexError, TypeError, AttributeError):
             pass
 
-        show_delay(delay, next_label)
+        # Countdown loop — checks self.interrupted each second so CTRL+C
+        # breaks out immediately without needing a double-press.
+        import sys as _sys
+
+        label = f"next: {next_label}" if next_label else "next task"
+        for remaining in range(delay, 0, -1):
+            if self.interrupted:
+                _sys.stdout.write(f"\r  \u23f3 Delay interrupted.{' ' * 50}\n")
+                _sys.stdout.flush()
+                return
+            _sys.stdout.write(
+                f"\r  \u23f3 Waiting {remaining}s before {label} (anti-rate-limit)..."
+            )
+            _sys.stdout.flush()
+            time.sleep(1)
+
+        _sys.stdout.write(f"\r  \u23f3 Delay complete, resuming execution.{' ' * 40}\n")
+        _sys.stdout.flush()
 
     # ─── Heartbeat ───────────────────────────────────────────────
 
@@ -955,7 +975,7 @@ class TaskExecutor:
             save_live_status(self.run_context, None, dict(self._results), list(self._task_results))
 
             # Random delay between tasks (anti-rate-limit)
-            self._inter_task_delay(idx, tasks[idx + 1:])
+            self._inter_task_delay(idx, tasks[idx + 1:], last_success=success)
 
         # Cleanup
         reset_terminal_title()
@@ -1149,7 +1169,7 @@ class TaskExecutor:
 
             # Random delay between tasks (anti-rate-limit)
             remaining_tasks = [t for t in tasks[idx + 1:] if t.get("status") != "completed"]
-            self._inter_task_delay(idx, remaining_tasks)
+            self._inter_task_delay(idx, remaining_tasks, last_success=success)
 
         reset_terminal_title()
 
