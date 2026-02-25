@@ -188,6 +188,7 @@ def _execute(args, dry_run: bool = False) -> int:
         tool_config=tool_config,
         model=model,
         use_proxy=use_proxy,
+        proxy_mode=proxy_mode,
         dry_run=dry_run,
         heartbeat_interval=heartbeat,
         workspace=workspace,

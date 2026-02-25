@@ -231,6 +231,7 @@ class TaskExecutor:
         self.current_process: subprocess.Popen | None = None
         self.interrupted: bool = False
         self._ctrl_c_count: int = 0
+        self._task_needs_proxy: bool | None = None  # Per-task proxy override
 
         # Heartbeat thread control
         self._stop_heartbeat = threading.Event()
@@ -260,6 +261,7 @@ class TaskExecutor:
         self.tool_config: ToolConfig = kwargs["tool_config"]
         self.model: str | None = kwargs.get("model")
         self.use_proxy: bool = kwargs.get("use_proxy", True)
+        self.proxy_mode: str | None = kwargs.get("proxy_mode")  # "on"/"off"/None
         self.dry_run: bool = kwargs.get("dry_run", False)
         self.heartbeat_interval: int = kwargs.get("heartbeat_interval", 60)
         self.workspace: str = kwargs.get("workspace", "")
@@ -432,7 +434,21 @@ class TaskExecutor:
 
     def _make_env(self) -> dict:
         env = os.environ.copy()
-        if not self.use_proxy:
+
+        # Resolve effective proxy need:
+        #   explicit --proxy/--no-proxy always wins,
+        #   otherwise per-task tool's needs_proxy,
+        #   fallback to global self.use_proxy.
+        if getattr(self, 'proxy_mode', None) == "on":
+            needs_proxy = True
+        elif getattr(self, 'proxy_mode', None) == "off":
+            needs_proxy = False
+        elif self._task_needs_proxy is not None:
+            needs_proxy = self._task_needs_proxy
+        else:
+            needs_proxy = self.use_proxy
+
+        if not needs_proxy:
             keys_to_remove = [
                 k
                 for k in env
@@ -904,6 +920,7 @@ class TaskExecutor:
 
             # Execute
             show_task_running()
+            self._task_needs_proxy = task_tool_config.needs_proxy
             self._start_heartbeat(task_no)
             if self._tracker:
                 self._tracker.set_current_task(task_no, task.task_name)
@@ -911,6 +928,7 @@ class TaskExecutor:
 
             return_code, elapsed = self.execute_task(cmd, log_path)
 
+            self._task_needs_proxy = None
             self._stop_heartbeat_fn()
             if self._tracker:
                 self._tracker.stop()
