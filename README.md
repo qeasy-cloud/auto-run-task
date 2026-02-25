@@ -1,9 +1,18 @@
 # Auto Task Runner v3.0
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Powered by QeasyCloud](https://img.shields.io/badge/Powered%20by-轻易云-orange.svg)](https://www.qeasy.cloud)
+
 > 项目化 AI Agent CLI 批量任务执行引擎 — 支持多工具、多模型、项目管理、任务集、运行历史
 
+**Auto Task Runner** 是由 [广东轻亿云软件科技有限公司（QeasyCloud）](https://www.qeasy.cloud) 研发团队开源的 AI Agent 批量任务执行引擎。
 将结构化的任务集（`.tasks.json`）+ Prompt 模板，批量交给 AI Agent CLI 自动执行。
 适用于大规模代码迁移、批量修复、自动化重构等场景。
+
+> 💡 **[轻易云数据集成平台](https://www.qeasy.cloud)** 是我们的核心产品 —— 一站式数据集成解决方案，
+> 连接 200+ 应用系统，实现企业数据自动化流转。Auto Task Runner 正是我们在
+> AI 辅助研发实践中沉淀出的工程工具。
 
 ## 特性
 
@@ -23,7 +32,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/yourname/auto-run-task.git
+git clone https://github.com/qeasy-cloud/auto-run-task.git
 cd auto-run-task
 
 # 2. 安装依赖
@@ -138,7 +147,15 @@ auto-run-task/
 │   ├── __init__.py                 # v3.0.0
 │   ├── cli.py                      # 子命令架构 + Legacy 兼容
 │   ├── config.py                   # 工具/模型配置
-│   ├── display.py                  # Rich 终端显示
+│   ├── display/                    # Rich 终端显示（模块化）
+│   │   ├── __init__.py             # 统一导出
+│   │   ├── core.py                 # Console 单例 & 常量
+│   │   ├── banners.py              # 启动横幅
+│   │   ├── tasks.py                # 任务列表 & 执行展示
+│   │   ├── tracker.py              # Rich Live 实时面板
+│   │   ├── summary.py              # 执行摘要 & 进度条
+│   │   ├── projects.py             # 项目仪表板
+│   │   └── messages.py             # 错误/警告/提示消息
 │   ├── executor.py                 # PTY 任务执行引擎
 │   ├── renderer.py                 # 模板渲染
 │   ├── state.py                    # Legacy 状态管理
@@ -286,6 +303,33 @@ projects/FIX_CODE/
 DEBUG=1 python run.py run MY_PROJECT my-tasks
 ```
 
-## License
+## 开源信息
 
-MIT
+### 许可证
+
+本项目基于 [MIT License](LICENSE) 开源。您可以自由使用、修改和分发本软件。
+
+### 作者
+
+**广东轻亿云软件科技有限公司（QeasyCloud）** 研发团队
+
+- 🏢 公司：广东轻亿云软件科技有限公司
+- 🌐 官网：[https://www.qeasy.cloud](https://www.qeasy.cloud)
+- 🚀 核心产品：[轻易云数据集成平台](https://www.qeasy.cloud) — 连接 200+ 应用，一站式企业数据集成
+- 📦 GitHub：[https://github.com/qeasy-cloud](https://github.com/qeasy-cloud)
+
+### 相关开源项目
+
+| 项目 | 说明 |
+| --- | --- |
+| [auto-run-task](https://github.com/qeasy-cloud/auto-run-task) | AI Agent CLI 批量任务执行引擎（本项目） |
+
+### 贡献
+
+欢迎提交 Issue 和 Pull Request！请参阅项目的 GitHub 仓库参与贡献。
+
+---
+
+<p align="center">
+  <sub>Made with ❤️ by <a href="https://www.qeasy.cloud">轻易云 QeasyCloud</a> R&D Team</sub>
+</p>
