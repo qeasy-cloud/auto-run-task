@@ -4,6 +4,7 @@ Project management for Auto Task Runner v3.0.
 Handles project CRUD operations, metadata persistence, and run records.
 """
 
+import contextlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -191,7 +192,7 @@ def load_project(name: str) -> ProjectConfig:
     if not init_file.exists():
         raise FileNotFoundError(f"Project not found: {name} (no __init__.json at {init_file})")
 
-    with open(init_file, "r", encoding="utf-8") as f:
+    with open(init_file, encoding="utf-8") as f:
         data = json.load(f)
 
     return ProjectConfig.from_dict(data, project_dir=project_dir)
@@ -218,10 +219,8 @@ def list_projects() -> list[ProjectConfig]:
     projects = []
     for d in sorted(root.iterdir()):
         if d.is_dir() and (d / "__init__.json").exists():
-            try:
+            with contextlib.suppress(json.JSONDecodeError, KeyError):
                 projects.append(load_project(d.name))
-            except (json.JSONDecodeError, KeyError):
-                pass  # Skip corrupted projects
 
     return projects
 
@@ -242,7 +241,7 @@ def validate_project(name: str) -> ValidationResult:
     # Load and validate __init__.json
     init_file = project_dir / "__init__.json"
     try:
-        with open(init_file, "r", encoding="utf-8") as f:
+        with open(init_file, encoding="utf-8") as f:
             data = json.load(f)
         result.merge(validate_init_json(data, project_dir))
     except json.JSONDecodeError as e:
@@ -257,7 +256,7 @@ def validate_project(name: str) -> ValidationResult:
     # Validate all task set files
     for ts_file in sorted(project_dir.glob("*.tasks.json")):
         try:
-            with open(ts_file, "r", encoding="utf-8") as f:
+            with open(ts_file, encoding="utf-8") as f:
                 ts_data = json.load(f)
             ts_result = validate_task_set_file(ts_data, project_dir)
             for err in ts_result.errors:

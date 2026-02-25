@@ -12,6 +12,7 @@ Handles:
 """
 
 import atexit
+import contextlib
 import errno
 import json
 import os
@@ -27,6 +28,7 @@ from pathlib import Path
 
 from .config import PROXY_ENV_KEYS, ToolConfig, get_tool_config
 from .display import (
+    SPINNER_FRAMES,
     console,
     reset_terminal_title,
     set_terminal_title,
@@ -40,6 +42,7 @@ from .display import (
     show_info,
     show_interrupt,
     show_progress_bar,
+    show_summary,
     show_task_cmd,
     show_task_list,
     show_task_prompt_info,
@@ -47,10 +50,8 @@ from .display import (
     show_task_running,
     show_task_skip,
     show_task_start,
-    show_summary,
     show_tool_not_found,
     show_warning,
-    SPINNER_FRAMES,
 )
 from .renderer import render_prompt
 from .state import find_start_index, get_task_stats, load_plan, save_plan
@@ -126,12 +127,12 @@ class TaskExecutor:
         self.template_path: Path | None = args.template_path
         self.project_name: str = args.project
         self.tool_config = args.tool_config
-        self.model: str | None = args.model
-        self.use_proxy: bool = args.use_proxy
-        self.dry_run: bool = args.dry_run
-        self.heartbeat_interval: int = args.heartbeat
+        self.model: str | None = args.model  # type: ignore[no-redef]
+        self.use_proxy: bool = args.use_proxy  # type: ignore[no-redef]
+        self.dry_run: bool = args.dry_run  # type: ignore[no-redef]
+        self.heartbeat_interval: int = args.heartbeat  # type: ignore[no-redef]
 
-        self.work_dir: Path | None = args.work_dir_path
+        self.work_dir: Path | None = args.work_dir_path  # type: ignore[no-redef]
         self.project_dir: Path | None = None
         self.tasks_dir: Path | None = None
         self.logs_dir: Path | None = None
@@ -175,7 +176,7 @@ class TaskExecutor:
         if self.template_path:
             return self.template_path.read_text(encoding="utf-8")
 
-        template_rel = plan.get("template")
+        template_rel: str | None = plan.get("template")
         if template_rel:
             template_path = self.plan_path.parent / template_rel
             if template_path.exists():
@@ -196,7 +197,7 @@ class TaskExecutor:
 
         # 1. Per-task template override
         if task.prompt:
-            tpl_path = project_dir / task.prompt
+            tpl_path = project_dir / str(task.prompt)
             if tpl_path.exists():
                 return tpl_path.read_text(encoding="utf-8")
 
@@ -267,32 +268,30 @@ class TaskExecutor:
                 return
             time.sleep(0.1)
 
-        try:
+        with contextlib.suppress(ProcessLookupError, OSError):
             os.killpg(pgid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
 
     def _force_kill(self):
         proc = self.current_process
         if proc and proc.poll() is None:
-            try:
+            with contextlib.suppress(Exception):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
 
     def _make_env(self) -> dict:
         env = os.environ.copy()
         if not self.use_proxy:
             keys_to_remove = [
-                k for k in env
+                k
+                for k in env
                 if k in PROXY_ENV_KEYS or k.lower() in [v.lower() for v in PROXY_ENV_KEYS]
             ]
             for key in keys_to_remove:
                 del env[key]
         return env
 
-    def _build_command(self, task_file: Path, tool_config: ToolConfig | None = None,
-                       model: str | None = None) -> str:
+    def _build_command(
+        self, task_file: Path, tool_config: ToolConfig | None = None, model: str | None = None
+    ) -> str:
         tc = tool_config or self.tool_config
         m = model or self.model
         cmd = tc.cmd_template
@@ -350,17 +349,15 @@ class TaskExecutor:
         master_fd, slave_fd = pty_module.openpty()
 
         try:
-            import struct
             import fcntl
+            import struct
             import termios
 
             size = struct.pack("HHHH", 50, 120, 0, 0)
-            try:
+            with contextlib.suppress(OSError):
                 size = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, size)
-            except (IOError, OSError):
-                pass
             fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, size)
-        except (ImportError, IOError, OSError):
+        except (ImportError, OSError):
             pass
 
         self.current_process = subprocess.Popen(
@@ -405,10 +402,8 @@ class TaskExecutor:
                     self._drain_fd(master_fd, log_file)
                     break
 
-        try:
+        with contextlib.suppress(OSError):
             os.close(master_fd)
-        except OSError:
-            pass
 
         try:
             self.current_process.wait(timeout=10)
@@ -440,7 +435,9 @@ class TaskExecutor:
         start_time = time.time()
 
         with open(log_path, "wb") as log_file:
-            for line in iter(self.current_process.stdout.readline, b""):
+            stdout = self.current_process.stdout
+            assert stdout is not None
+            for line in iter(stdout.readline, b""):
                 if self.interrupted:
                     break
                 os.write(sys.stdout.fileno(), line)
@@ -499,10 +496,13 @@ class TaskExecutor:
         result = sp.run(
             ["git", "status", "--porcelain"],
             cwd=str(self.work_dir),
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if result.stdout.strip():
-            show_warning(f"Git safety: workspace has uncommitted changes ({len(result.stdout.strip().splitlines())} files)")
+            show_warning(
+                f"Git safety: workspace has uncommitted changes ({len(result.stdout.strip().splitlines())} files)"
+            )
 
         # Create safety tag
         tag_name = f"auto-run-task/{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -617,17 +617,20 @@ class TaskExecutor:
                 try:
                     task_tool_config = get_tool_config(task.cli.tool)
                 except KeyError:
-                    show_warning(f"Unknown tool '{task.cli.tool}' for task {task_no}, using default")
+                    show_warning(
+                        f"Unknown tool '{task.cli.tool}' for task {task_no}, using default"
+                    )
             if task.cli.model:
                 task_model = task.cli.model
 
             # Check task-specific tool availability
-            if task_tool_config.name != self.tool_config.name:
-                if not self._check_tool_available(task_tool_config.name):
-                    task.status = "failed"
-                    save_task_set(self.task_set, project_dir)
-                    failed += 1
-                    continue
+            if task_tool_config.name != self.tool_config.name and not self._check_tool_available(
+                task_tool_config.name
+            ):
+                task.status = "failed"
+                save_task_set(self.task_set, project_dir)
+                failed += 1
+                continue
 
             # Build command
             cmd = self._build_command(prompt_path, task_tool_config, task_model)
@@ -668,13 +671,15 @@ class TaskExecutor:
             show_task_result(task_no, success, elapsed, rel_log)
 
             # Track result
-            self._task_results.append({
-                "task_no": task_no,
-                "status": task.status,
-                "duration_seconds": round(elapsed, 1),
-                "return_code": return_code,
-                "log_file": f"logs/{task_no.replace('/', '_').replace(chr(92), '_')}.log",
-            })
+            self._task_results.append(
+                {
+                    "task_no": task_no,
+                    "status": task.status,
+                    "duration_seconds": round(elapsed, 1),
+                    "return_code": return_code,
+                    "log_file": f"logs/{task_no.replace('/', '_').replace(chr(92), '_')}.log",
+                }
+            )
 
             # Progress
             current_done = sum(1 for t in all_tasks if t.status == "completed")
@@ -802,6 +807,7 @@ class TaskExecutor:
                 prompt_content = json.dumps(task, ensure_ascii=False, indent=2)
 
             safe_name = task_no.replace("/", "_").replace("\\", "_")
+            assert self.tasks_dir is not None
             task_file = self.tasks_dir / f"{safe_name}_task.md"
             task_file.write_text(prompt_content, encoding="utf-8")
 
@@ -820,6 +826,7 @@ class TaskExecutor:
 
             now = datetime.now()
             log_name = f"{safe_name}_{now.strftime('%H:%M')}.log"
+            assert self.logs_dir is not None
             log_path = self.logs_dir / log_name
 
             show_task_running()

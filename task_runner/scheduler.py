@@ -69,11 +69,10 @@ def validate_dependencies(task_set: TaskSet) -> ValidationResult:
 
     # Check for missing dependency references
     for task in task_set.tasks:
-        if task.depends_on:
-            if task.depends_on not in task_map:
-                result.add_error(
-                    f"Task '{task.task_no}' depends on '{task.depends_on}' which doesn't exist"
-                )
+        if task.depends_on and task.depends_on not in task_map:
+            result.add_error(
+                f"Task '{task.task_no}' depends on '{task.depends_on}' which doesn't exist"
+            )
 
     # Check for cycles using DFS
     visited = set()
@@ -120,7 +119,7 @@ def get_execution_plan(task_set: TaskSet) -> list[list[Task]]:
     task_map = {t.task_no: t for t in tasks}
     completed = set()
     waves = []
-    remaining = set(t.task_no for t in tasks)
+    remaining = {t.task_no for t in tasks}
 
     max_iterations = len(tasks) + 1
     iteration = 0

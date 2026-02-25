@@ -2,14 +2,11 @@
 Run command: orchestrate the full execution flow.
 """
 
-import sys
-import time
 from datetime import datetime
 
 from ..config import get_tool_config
-from ..display import console, show_error, show_info, show_warning
+from ..display import show_error, show_info
 from ..project import (
-    ProjectConfig,
     RunRecord,
     add_run_record,
     get_project_dir,
@@ -25,7 +22,7 @@ from ..runtime import (
     update_latest_symlink,
 )
 from ..scheduler import schedule_tasks
-from ..task_set import load_task_set, save_task_set
+from ..task_set import load_task_set
 
 
 def handle_run(args) -> int:
@@ -58,13 +55,17 @@ def _execute(args, dry_run: bool = False) -> int:
         return 1
 
     # Model validation
-    if model and tool_config.supports_model and tool_config.models:
-        if model not in tool_config.models:
-            show_error(
-                f"Unknown model '{model}' for tool '{tool_name}'. "
-                f"Available: {', '.join(tool_config.models)}"
-            )
-            return 1
+    if (
+        model
+        and tool_config.supports_model
+        and tool_config.models
+        and model not in tool_config.models
+    ):
+        show_error(
+            f"Unknown model '{model}' for tool '{tool_name}'. "
+            f"Available: {', '.join(tool_config.models)}"
+        )
+        return 1
     if not tool_config.supports_model:
         model = None
     elif not model and tool_config.default_model:

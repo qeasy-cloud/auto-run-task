@@ -2,8 +2,6 @@
 Project management commands: create, list, info, validate, archive.
 """
 
-import sys
-
 from ..display import console, show_error, show_info, show_warning
 from ..project import (
     create_project,
@@ -63,7 +61,9 @@ def _project_list(args) -> int:
     projects = list_projects()
 
     if not projects:
-        show_info("No projects found. Create one with: python run.py project create NAME --workspace PATH")
+        show_info(
+            "No projects found. Create one with: python run.py project create NAME --workspace PATH"
+        )
         return 0
 
     from ..display import show_project_list
@@ -93,7 +93,7 @@ def _project_info(args) -> int:
             stats = get_task_set_stats(ts)
             task_sets_info.append({"name": ts_name, "stats": stats})
         except Exception:
-            task_sets_info.append({"name": ts_name, "stats": None})
+            task_sets_info.append({"name": ts_name, "stats": None})  # type: ignore[dict-item]
 
     from ..display import show_project_info
 

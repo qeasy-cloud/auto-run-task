@@ -106,9 +106,9 @@ def validate_project_structure(project_dir: Path) -> ValidationResult:
     # __init__.json is required
     init_file = project_dir / "__init__.json"
     if not init_file.exists():
-        result.add_error(f"Missing required file: __init__.json")
+        result.add_error("Missing required file: __init__.json")
     elif not init_file.is_file():
-        result.add_error(f"__init__.json is not a file")
+        result.add_error("__init__.json is not a file")
 
     # templates/ directory should exist with __init__.md
     templates_dir = project_dir / "templates"

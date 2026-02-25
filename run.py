@@ -59,22 +59,27 @@ def main():
 
         if command == "project":
             from task_runner.commands.project_cmd import handle_project
+
             sys.exit(handle_project(args))
 
         elif command == "run":
             from task_runner.commands.run_cmd import handle_run
+
             sys.exit(handle_run(args))
 
         elif command == "dry-run":
             from task_runner.commands.dryrun_cmd import handle_dryrun
+
             sys.exit(handle_dryrun(args))
 
         elif command == "list":
             from task_runner.commands.list_cmd import handle_list
+
             sys.exit(handle_list(args))
 
         elif command == "status":
             from task_runner.commands.status_cmd import handle_status
+
             sys.exit(handle_status(args))
 
         else:

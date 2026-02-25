@@ -63,7 +63,7 @@ def set_terminal_title(text: str):
     try:
         sys.stderr.write(f"\033]0;{text}\007")
         sys.stderr.flush()
-    except (IOError, OSError):
+    except OSError:
         pass
 
 
@@ -72,7 +72,7 @@ def reset_terminal_title():
     try:
         sys.stderr.write("\033]0;\007")
         sys.stderr.flush()
-    except (IOError, OSError):
+    except OSError:
         pass
 
 
@@ -270,8 +270,12 @@ def show_task_list_v3(task_set_name: str, tasks: list):
     console.print(table)
 
     total = len(tasks)
-    done = sum(1 for t in tasks if (t.status if hasattr(t, "status") else t.get("status")) == "completed")
-    failed = sum(1 for t in tasks if (t.status if hasattr(t, "status") else t.get("status")) == "failed")
+    done = sum(
+        1 for t in tasks if (t.status if hasattr(t, "status") else t.get("status")) == "completed"
+    )
+    failed = sum(
+        1 for t in tasks if (t.status if hasattr(t, "status") else t.get("status")) == "failed"
+    )
     console.print(
         f"\n  [bold]Total:[/bold] {total}  │  "
         f"[green]Done: {done}[/green]  │  "
@@ -333,12 +337,10 @@ def show_task_result(task_no: str, success: bool, elapsed: float, log_path: str)
 
     if success:
         console.print(
-            f"  [bold green]✅ Task {task_no} completed[/bold green] " f"in [cyan]{time_str}[/cyan]"
+            f"  [bold green]✅ Task {task_no} completed[/bold green] in [cyan]{time_str}[/cyan]"
         )
     else:
-        console.print(
-            f"  [bold red]❌ Task {task_no} failed[/bold red] " f"in [cyan]{time_str}[/cyan]"
-        )
+        console.print(f"  [bold red]❌ Task {task_no} failed[/bold red] in [cyan]{time_str}[/cyan]")
 
     console.print(f"  [dim]📄 Log: {log_path}[/dim]")
     console.print()
@@ -364,9 +366,7 @@ def show_heartbeat(task_no: str, elapsed: float, frame_idx: int = 0):
     spinner = SPINNER_FRAMES[frame_idx % len(SPINNER_FRAMES)]
     ts = datetime.now().strftime("%H:%M:%S")
 
-    console.print(
-        f"  [dim]{spinner} [{ts}] Task {task_no} running... " f"({time_str} elapsed)[/dim]"
-    )
+    console.print(f"  [dim]{spinner} [{ts}] Task {task_no} running... ({time_str} elapsed)[/dim]")
 
 
 # ─── Summary ─────────────────────────────────────────────────────
@@ -587,7 +587,9 @@ def show_validation_result(name: str, result):
     if result.ok:
         console.print(f"  [green]Result: PASS (with {len(result.warnings)} warnings)[/green]\n")
     else:
-        console.print(f"  [red]Result: FAIL ({len(result.errors)} errors, {len(result.warnings)} warnings)[/red]\n")
+        console.print(
+            f"  [red]Result: FAIL ({len(result.errors)} errors, {len(result.warnings)} warnings)[/red]\n"
+        )
 
 
 def show_run_history(runs: list[dict]):

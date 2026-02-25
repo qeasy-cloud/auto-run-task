@@ -14,7 +14,7 @@ def handle_list(args) -> int:
     status_filter = getattr(args, "status", None)
 
     try:
-        config = load_project(project_name)
+        load_project(project_name)
     except FileNotFoundError:
         show_error(f"Project '{project_name}' not found!")
         return 1
@@ -67,7 +67,9 @@ def _list_tasks(project_dir, task_set_name: str, status_filter: str | None) -> i
         tasks = [t for t in tasks if t.status == status_filter]
 
     if not tasks:
-        show_info(f"No tasks found" + (f" with status '{status_filter}'" if status_filter else "") + ".")
+        show_info(
+            "No tasks found" + (f" with status '{status_filter}'" if status_filter else "") + "."
+        )
         return 0
 
     from ..display import show_task_list_v3

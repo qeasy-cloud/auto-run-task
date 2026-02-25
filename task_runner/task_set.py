@@ -51,14 +51,16 @@ class Task:
     def to_dict(self) -> dict:
         """Serialize back to dict, preserving extra fields from _raw."""
         d = dict(self._raw)
-        d.update({
-            "task_no": self.task_no,
-            "task_name": self.task_name,
-            "batch": self.batch,
-            "description": self.description,
-            "priority": self.priority,
-            "status": self.status,
-        })
+        d.update(
+            {
+                "task_no": self.task_no,
+                "task_name": self.task_name,
+                "batch": self.batch,
+                "description": self.description,
+                "priority": self.priority,
+                "status": self.status,
+            }
+        )
         if self.prompt:
             d["prompt"] = self.prompt
         if self.cli.tool or self.cli.model:
@@ -120,9 +122,7 @@ def discover_task_sets(project_dir: Path) -> list[str]:
     if not project_dir.exists():
         return []
     return sorted(
-        f.stem.replace(".tasks", "")
-        for f in project_dir.glob("*.tasks.json")
-        if f.is_file()
+        f.stem.replace(".tasks", "") for f in project_dir.glob("*.tasks.json") if f.is_file()
     )
 
 
@@ -140,7 +140,7 @@ def load_task_set(
     if not file_path.exists():
         raise FileNotFoundError(f"Task set not found: {file_path}")
 
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(file_path, encoding="utf-8") as f:
         data = json.load(f)
 
     ts = TaskSet.from_dict(data, name=name, file_path=file_path)
@@ -181,7 +181,7 @@ def validate_task_set(task_set_path: Path, project_dir: Path) -> ValidationResul
     """Validate a task set file."""
     result = ValidationResult()
     try:
-        with open(task_set_path, "r", encoding="utf-8") as f:
+        with open(task_set_path, encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
         result.add_error(f"Invalid JSON: {e}")

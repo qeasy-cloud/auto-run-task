@@ -163,12 +163,12 @@ def list_runs(project_dir: Path) -> list[dict]:
         run_json = d / "run.json"
         if run_json.exists():
             try:
-                with open(run_json, "r", encoding="utf-8") as f:
+                with open(run_json, encoding="utf-8") as f:
                     data = json.load(f)
                 # Augment with summary if available
                 summary_json = d / "summary.json"
                 if summary_json.exists():
-                    with open(summary_json, "r", encoding="utf-8") as f:
+                    with open(summary_json, encoding="utf-8") as f:
                         summary = json.load(f)
                     data["summary"] = summary
                 results.append(data)

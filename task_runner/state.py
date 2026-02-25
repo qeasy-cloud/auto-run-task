@@ -26,8 +26,8 @@ def load_plan(plan_path: Path) -> dict:
     if not plan_path.exists():
         raise FileNotFoundError(f"Plan file not found: {plan_path}")
 
-    with open(plan_path, "r", encoding="utf-8") as f:
-        plan = json.load(f)
+    with open(plan_path, encoding="utf-8") as f:
+        plan: dict = json.load(f)
 
     if "tasks" not in plan or not isinstance(plan["tasks"], list):
         raise ValueError(f"Plan must contain a 'tasks' array: {plan_path}")

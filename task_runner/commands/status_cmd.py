@@ -4,8 +4,8 @@ Status command: project dashboard and per-project status.
 
 from ..display import show_error, show_info
 from ..project import get_project_dir, list_projects, load_project
-from ..task_set import discover_task_sets, get_task_set_stats, load_task_set
 from ..runtime import list_runs
+from ..task_set import discover_task_sets, get_task_set_stats, load_task_set
 
 
 def handle_status(args) -> int:
@@ -23,7 +23,9 @@ def _dashboard() -> int:
     projects = list_projects()
 
     if not projects:
-        show_info("No projects found. Create one with: python run.py project create NAME --workspace PATH")
+        show_info(
+            "No projects found. Create one with: python run.py project create NAME --workspace PATH"
+        )
         return 0
 
     # Gather stats for each project
@@ -49,14 +51,16 @@ def _dashboard() -> int:
         runs = list_runs(project_dir)
         last_run = runs[0] if runs else None
 
-        dashboard_data.append({
-            "config": config,
-            "task_sets": len(ts_names),
-            "total_tasks": total_tasks,
-            "completed_tasks": completed_tasks,
-            "failed_tasks": failed_tasks,
-            "last_run": last_run,
-        })
+        dashboard_data.append(
+            {
+                "config": config,
+                "task_sets": len(ts_names),
+                "total_tasks": total_tasks,
+                "completed_tasks": completed_tasks,
+                "failed_tasks": failed_tasks,
+                "last_run": last_run,
+            }
+        )
 
     from ..display import show_project_dashboard
 
@@ -83,7 +87,7 @@ def _project_status(project_name: str) -> int:
             stats = get_task_set_stats(ts)
             task_sets_info.append({"name": ts_name, "stats": stats})
         except Exception as e:
-            task_sets_info.append({"name": ts_name, "stats": None, "error": str(e)})
+            task_sets_info.append({"name": ts_name, "stats": None, "error": str(e)})  # type: ignore[dict-item]
 
     # Run history
     runs = list_runs(project_dir)

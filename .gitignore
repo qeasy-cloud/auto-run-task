@@ -32,4 +32,16 @@ Thumbs.db
 *.bak
 
 projects/
-.mypy_cache
+
+# Type checking
+.mypy_cache/
+
+# Test & coverage
+.pytest_cache/
+htmlcov/
+coverage.xml
+.coverage
+*.junit.xml
+
+# Ruff cache
+.ruff_cache/

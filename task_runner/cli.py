@@ -128,60 +128,87 @@ def _add_execution_options(parser):
     # Tool & Model
     tool_group = parser.add_argument_group("tool & model")
     tool_group.add_argument(
-        "--tool", choices=list_tool_names(), default=None,
+        "--tool",
+        choices=list_tool_names(),
+        default=None,
         help="CLI tool to use (default: from project config)",
     )
     tool_group.add_argument(
-        "--model", default=None, metavar="MODEL",
+        "--model",
+        default=None,
+        metavar="MODEL",
         help="Model name (default: from project config)",
     )
     tool_group.add_argument(
-        "--template", default=None, metavar="PATH",
+        "--template",
+        default=None,
+        metavar="PATH",
         help="Override template path (relative to project dir or absolute)",
     )
 
     # Proxy
     proxy_group = parser.add_mutually_exclusive_group()
     proxy_group.add_argument(
-        "--proxy", dest="proxy_mode", action="store_const", const="on",
+        "--proxy",
+        dest="proxy_mode",
+        action="store_const",
+        const="on",
         help="Force enable proxy",
     )
     proxy_group.add_argument(
-        "--no-proxy", dest="proxy_mode", action="store_const", const="off",
+        "--no-proxy",
+        dest="proxy_mode",
+        action="store_const",
+        const="off",
         help="Force disable proxy",
     )
 
     # Filtering
     filter_group = parser.add_argument_group("filtering")
     filter_group.add_argument(
-        "--batch", type=int, default=None, metavar="N",
+        "--batch",
+        type=int,
+        default=None,
+        metavar="N",
         help="Only run tasks in batch N",
     )
     filter_group.add_argument(
-        "--min-priority", type=int, default=None, metavar="N",
+        "--min-priority",
+        type=int,
+        default=None,
+        metavar="N",
         help="Only run tasks with priority <= N",
     )
     filter_group.add_argument(
-        "--start", default=None, metavar="TASK_NO",
+        "--start",
+        default=None,
+        metavar="TASK_NO",
         help="Start from a specific task number (e.g., 'F-3')",
     )
     filter_group.add_argument(
-        "--retry-failed", action="store_true",
+        "--retry-failed",
+        action="store_true",
         help="Only re-run tasks with status 'failed'",
     )
 
     # Control
     ctrl_group = parser.add_argument_group("execution control")
     ctrl_group.add_argument(
-        "--work-dir", default=None, metavar="DIR",
+        "--work-dir",
+        default=None,
+        metavar="DIR",
         help="Override working directory",
     )
     ctrl_group.add_argument(
-        "--heartbeat", type=int, default=60, metavar="SEC",
+        "--heartbeat",
+        type=int,
+        default=60,
+        metavar="SEC",
         help="Heartbeat interval in seconds (default: 60)",
     )
     ctrl_group.add_argument(
-        "--git-safety", action="store_true",
+        "--git-safety",
+        action="store_true",
         help="Check workspace git status and create safety tag before execution",
     )
 
@@ -193,7 +220,9 @@ def _add_list_subparser(subparsers):
         help="List task sets or tasks within a project",
     )
     list_parser.add_argument("project_name", help="Project name")
-    list_parser.add_argument("task_set_name", nargs="?", default=None, help="Task set name (optional)")
+    list_parser.add_argument(
+        "task_set_name", nargs="?", default=None, help="Task set name (optional)"
+    )
     list_parser.add_argument("--status", default=None, help="Filter by task status")
 
 
@@ -203,7 +232,9 @@ def _add_status_subparser(subparsers):
         "status",
         help="Show project status dashboard",
     )
-    status_parser.add_argument("project_name", nargs="?", default=None, help="Project name (omit for all)")
+    status_parser.add_argument(
+        "project_name", nargs="?", default=None, help="Project name (omit for all)"
+    )
 
 
 # ─── Legacy Parser ───────────────────────────────────────────────
