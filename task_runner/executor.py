@@ -262,6 +262,8 @@ class TaskExecutor:
         self.model: str | None = kwargs.get("model")
         self.use_proxy: bool = kwargs.get("use_proxy", True)
         self.proxy_mode: str | None = kwargs.get("proxy_mode")  # "on"/"off"/None
+        self.cli_tool_override: bool = kwargs.get("cli_tool_override", False)
+        self.cli_model_override: bool = kwargs.get("cli_model_override", False)
         self.dry_run: bool = kwargs.get("dry_run", False)
         self.heartbeat_interval: int = kwargs.get("heartbeat_interval", 60)
         self.workspace: str = kwargs.get("workspace", "")
@@ -881,16 +883,18 @@ class TaskExecutor:
                 continue
 
             # Resolve per-task tool/model
+            # CLI --tool/--model always wins; per-task JSON only applies
+            # when the user did NOT explicitly specify on the command line.
             task_tool_config = self.tool_config
             task_model = self.model
-            if task.cli.tool:
+            if task.cli.tool and not self.cli_tool_override:
                 try:
                     task_tool_config = get_tool_config(task.cli.tool)
                 except KeyError:
                     show_warning(
                         f"Unknown tool '{task.cli.tool}' for task {task_no}, using default"
                     )
-            if task.cli.model:
+            if task.cli.model and not self.cli_model_override:
                 task_model = task.cli.model
 
             # Check task-specific tool availability

@@ -45,8 +45,10 @@ def _execute(args, dry_run: bool = False) -> int:
     project_dir = get_project_dir(project_name)
 
     # ── Resolve tool/model ──
-    tool_name = getattr(args, "tool", None) or config.default_tool
-    model = getattr(args, "model", None) or config.default_model
+    cli_tool = getattr(args, "tool", None)
+    cli_model = getattr(args, "model", None)
+    tool_name = cli_tool or config.default_tool
+    model = cli_model or config.default_model
 
     try:
         tool_config = get_tool_config(tool_name)
@@ -189,6 +191,8 @@ def _execute(args, dry_run: bool = False) -> int:
         model=model,
         use_proxy=use_proxy,
         proxy_mode=proxy_mode,
+        cli_tool_override=cli_tool is not None,
+        cli_model_override=cli_model is not None,
         dry_run=dry_run,
         heartbeat_interval=heartbeat,
         workspace=workspace,
