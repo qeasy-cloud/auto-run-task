@@ -55,6 +55,7 @@ from .tasks import (
     show_task_cmd,
     show_task_list,
     show_task_list_v3,
+    show_task_output,
     show_task_prompt_info,
     show_task_result,
     show_task_running,
@@ -103,6 +104,7 @@ __all__ = [
     # Tasks
     "show_task_list",
     "show_task_list_v3",
+    "show_task_output",
     "show_task_prompt_info",
     "show_task_result",
     "show_task_running",

@@ -5,7 +5,9 @@ Task execution display: task lists, start/result panels, skip/dry-run markers.
 from datetime import datetime
 
 from rich import box
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .core import STATUS_ICONS, STATUS_STYLES, _format_elapsed, console
 
@@ -190,8 +192,14 @@ def show_task_running():
     console.print(f"  {'─' * 56}")
 
 
-def show_task_result(task_no: str, success: bool, elapsed: float, log_path: str):
-    """Display task result after execution."""
+def show_task_result(
+    task_no: str,
+    success: bool,
+    elapsed: float,
+    log_path: str,
+    output_tail: str = "",
+):
+    """Display task result after execution, optionally with AI CLI output tail."""
     time_str = _format_elapsed(elapsed)
     console.print(f"  {'─' * 56}")
 
@@ -203,7 +211,47 @@ def show_task_result(task_no: str, success: bool, elapsed: float, log_path: str)
         console.print(f"  [bold red]❌ Task {task_no} failed[/bold red] in [cyan]{time_str}[/cyan]")
 
     console.print(f"  [dim]📄 Log: {log_path}[/dim]")
+
+    # Show AI CLI output tail so the user can see the actual result
+    if output_tail and output_tail.strip():
+        show_task_output(task_no, output_tail, success)
+
     console.print()
+
+
+# ─── AI CLI Output Summary ───────────────────────────────────────
+
+
+def show_task_output(task_no: str, output_text: str, success: bool = True, max_lines: int = 25):
+    """Display the tail of AI CLI output in a bordered panel.
+
+    This lets the user immediately see what the AI tool actually did/reported
+    without having to open the log file.
+    """
+    lines = output_text.strip().splitlines()
+    if not lines:
+        return
+
+    # Take the last max_lines
+    if len(lines) > max_lines:
+        display_lines = [f"  ... ({len(lines) - max_lines} lines omitted)"] + lines[-max_lines:]
+    else:
+        display_lines = lines
+
+    body = "\n".join(display_lines)
+
+    border_style = "green" if success else "red"
+    title = f"📋 Output · {task_no}"
+
+    panel = Panel(
+        Text(body, overflow="fold"),
+        title=title,
+        title_align="left",
+        border_style=border_style,
+        padding=(0, 1),
+        expand=True,
+    )
+    console.print(panel)
 
 
 def show_task_skip(task_no: str):

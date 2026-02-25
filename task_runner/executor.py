@@ -16,6 +16,7 @@ import contextlib
 import errno
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -27,6 +28,101 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import PROXY_ENV_KEYS, ToolConfig, get_tool_config
+
+# ─── Log Sanitization Patterns ───────────────────────────────────
+
+# Regex to strip ANSI escape sequences (SGR, OSC, DEC private modes)
+_ANSI_RE = re.compile(
+    r"\x1b\[[0-9;]*[a-zA-Z]"
+    r"|\x1b\][^\x07]*\x07"
+    r"|\x1b\[\?[0-9;]*[a-zA-Z]"
+    r"|\r"  # also strip carriage returns from PTY output
+)
+
+# ── Block-based noise detection ──
+# Transient network errors from CLI tools (kimi, etc.) appear as multi-line blocks:
+#   Error: peer closed connection ... (incomplete chunked read)
+#   <html>
+#   <head><title>503 Service Temporarily Unavailable</title></head>
+#   ...
+#   </html>
+# We detect the START of such a block and skip everything until the END.
+
+_NOISE_BLOCK_START = re.compile(
+    r"Error:\s*peer closed connection"
+    r"|Error:\s*incomplete chunked read"
+    r"|^\s*<html>\s*$",
+    re.IGNORECASE,
+)
+_NOISE_BLOCK_END = re.compile(r"</html>", re.IGNORECASE)
+
+# Single-line noise (not part of a block)
+_NOISE_LINE_PATTERNS: list[re.Pattern] = [
+    re.compile(r"^\s*Error:\s*peer closed connection", re.IGNORECASE),
+    re.compile(r"^\s*\(incomplete chunked read\)\s*$", re.IGNORECASE),
+]
+
+
+def _is_noise_line(line: str) -> bool:
+    """Check if a single line is standalone noise (outside a block)."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return any(p.search(stripped) for p in _NOISE_LINE_PATTERNS)
+
+
+def _sanitize_text(raw_text: str) -> str:
+    """Strip ANSI codes and filter transient network error blocks from raw log text.
+
+    Uses a state machine: when a noise-block-start line is seen, all lines are
+    skipped until the corresponding noise-block-end (</html>).  Consecutive
+    blank lines are collapsed.
+    """
+    text = _ANSI_RE.sub("", raw_text)
+    lines = text.splitlines(keepends=True)
+    clean: list[str] = []
+    in_noise = False
+    prev_blank = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # ── inside a noise block → skip until end ──
+        if in_noise:
+            if _NOISE_BLOCK_END.search(stripped):
+                in_noise = False
+            continue
+
+        # ── detect start of a new noise block ──
+        if _NOISE_BLOCK_START.search(stripped):
+            in_noise = True
+            continue
+
+        # ── standalone noise line ──
+        if _is_noise_line(stripped):
+            continue
+
+        # ── collapse consecutive blank lines ──
+        is_blank = not stripped
+        if is_blank and prev_blank:
+            continue
+        prev_blank = is_blank
+
+        clean.append(line)
+
+    return "".join(clean)
+
+
+def _extract_output_tail(clean_text: str, max_lines: int = 30) -> str:
+    """Extract the last *max_lines* non-blank lines from sanitized text.
+
+    This gives users a quick view of what the AI CLI actually produced.
+    """
+    lines = [l for l in clean_text.splitlines() if l.strip()]
+    tail = lines[-max_lines:] if len(lines) > max_lines else lines
+    return "\n".join(tail)
+
+
 from .display import (
     SPINNER_FRAMES,
     ExecutionTracker,
@@ -488,6 +584,35 @@ class TaskExecutor:
             except OSError:
                 break
 
+    # ─── Log Sanitization ────────────────────────────────────────
+
+    @staticmethod
+    def _sanitize_log(log_path: Path) -> tuple[Path | None, str]:
+        """
+        Post-process a raw log file:
+          1. Strip ANSI escape sequences
+          2. Remove transient network error blocks (503 / peer closed / nginx)
+          3. Collapse consecutive blank lines
+        Writes result to <name>.clean.log alongside the original raw log.
+
+        Returns (clean_log_path, clean_text).  On error returns (None, "").
+        """
+        try:
+            raw = log_path.read_bytes()
+        except OSError:
+            return None, ""
+
+        raw_text = raw.decode("utf-8", errors="replace")
+        clean_text = _sanitize_text(raw_text)
+
+        clean_path = log_path.with_suffix(".clean.log")
+        try:
+            clean_path.write_text(clean_text, encoding="utf-8")
+        except OSError:
+            return None, clean_text
+
+        return clean_path, clean_text
+
     # ─── Git Safety ──────────────────────────────────────────────
 
     def _git_safety_check(self):
@@ -700,8 +825,16 @@ class TaskExecutor:
 
             save_task_set(self.task_set, project_dir)
 
+            # Sanitize log (strip ANSI codes + noise)
+            clean_log, clean_text = self._sanitize_log(log_path)
+            output_tail = _extract_output_tail(clean_text)
+
             rel_log = str(log_path.relative_to(project_dir))
-            show_task_result(task_no, success, elapsed, rel_log)
+            if clean_log:
+                rel_clean = str(clean_log.relative_to(project_dir))
+                show_task_result(task_no, success, elapsed, rel_clean, output_tail)
+            else:
+                show_task_result(task_no, success, elapsed, rel_log, output_tail)
 
             # Record to tracker
             if self._tracker:
@@ -888,8 +1021,15 @@ class TaskExecutor:
 
             save_plan(self.plan_path, plan)
 
-            rel_log = str(log_path.relative_to(self.plan_path.parent))
-            show_task_result(task_no, success, elapsed, rel_log)
+            # Sanitize log (strip ANSI codes + noise)
+            clean_log, clean_text = self._sanitize_log(log_path)
+            output_tail = _extract_output_tail(clean_text)
+
+            if clean_log:
+                rel_log = str(clean_log.relative_to(self.plan_path.parent))
+            else:
+                rel_log = str(log_path.relative_to(self.plan_path.parent))
+            show_task_result(task_no, success, elapsed, rel_log, output_tail)
 
             current_done = sum(1 for t in tasks if t.get("status") == "completed")
             show_progress_bar(current_done, total)
