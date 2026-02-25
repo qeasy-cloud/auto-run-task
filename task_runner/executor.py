@@ -29,6 +29,7 @@ from pathlib import Path
 from .config import PROXY_ENV_KEYS, ToolConfig, get_tool_config
 from .display import (
     SPINNER_FRAMES,
+    ExecutionTracker,
     console,
     reset_terminal_title,
     set_terminal_title,
@@ -96,6 +97,9 @@ class TaskExecutor:
         self._results = {"succeeded": 0, "failed": 0, "skipped": 0, "attempted": 0}
         self._task_results: list[dict] = []
 
+        # Live execution tracker (v3)
+        self._tracker: ExecutionTracker | None = None
+
     def _init_v3(self, **kwargs):
         """Initialize for v3 project-based mode."""
         self._mode = "v3"
@@ -116,6 +120,8 @@ class TaskExecutor:
         self.workspace: str = kwargs.get("workspace", "")
         self.template_override: str | None = kwargs.get("template_override")
         self.git_safety: bool = kwargs.get("git_safety", False)
+        self.verbose: bool = kwargs.get("verbose", False)
+        self.quiet: bool = kwargs.get("quiet", False)
 
         self.work_dir = Path(self.workspace) if self.workspace else None
 
@@ -527,6 +533,7 @@ class TaskExecutor:
     def _run_v3(self) -> int:
         """Execute tasks in v3 project-based mode."""
         from .project import get_project_dir
+        from .runtime import save_live_status
         from .task_set import save_task_set
 
         self._setup_signals()
@@ -553,23 +560,33 @@ class TaskExecutor:
         remaining = len(all_tasks) - done_count
 
         # Show banner
-        from .display import show_banner_v3
+        if not self.quiet:
+            from .display import show_banner_v3
 
-        show_banner_v3(
-            project=self.project_config.project,
-            task_set=self.task_set.name,
-            tool=self.tool_config.name,
-            model=self.model,
-            workspace=str(self.work_dir or self.workspace),
-            run_id=self.run_context.run_id,
-            total=len(all_tasks),
-            done=done_count,
-            remaining=remaining,
-            to_execute=total,
-            use_proxy=self.use_proxy,
-        )
+            show_banner_v3(
+                project=self.project_config.project,
+                task_set=self.task_set.name,
+                tool=self.tool_config.name,
+                model=self.model,
+                workspace=str(self.work_dir or self.workspace),
+                run_id=self.run_context.run_id,
+                total=len(all_tasks),
+                done=done_count,
+                remaining=remaining,
+                to_execute=total,
+                use_proxy=self.use_proxy,
+            )
 
         atexit.register(reset_terminal_title)
+
+        # ── Create execution tracker ──
+        if not self.quiet:
+            self._tracker = ExecutionTracker(
+                total_all=len(all_tasks),
+                total_to_execute=total,
+                project=self.project_config.project,
+                task_set=self.task_set.name,
+            )
 
         # Execute tasks
         succeeded = 0
@@ -587,10 +604,12 @@ class TaskExecutor:
             if task.status == "completed":
                 show_task_skip(task_no)
                 skipped += 1
+                if self._tracker:
+                    self._tracker.record_skip(task_no)
                 continue
 
             # Show task info
-            show_task_start(idx, total, task.to_dict())
+            show_task_start(idx, total, task)
 
             # Resolve template
             template = self._resolve_template_v3(task)
@@ -640,19 +659,29 @@ class TaskExecutor:
             task.status = "in-progress"
             save_task_set(self.task_set, project_dir)
 
+            # Write live status for external monitoring
+            save_live_status(
+                self.run_context, task_no, dict(self._results), list(self._task_results)
+            )
+
             # Log file
             log_path = self.run_context.get_log_path(task_no)
 
             # Execute
             show_task_running()
             self._start_heartbeat(task_no)
+            if self._tracker:
+                self._tracker.set_current_task(task_no, task.task_name)
+                self._tracker.start()
 
             return_code, elapsed = self.execute_task(cmd, log_path)
 
             self._stop_heartbeat_fn()
+            if self._tracker:
+                self._tracker.stop()
 
             if self.interrupted:
-                task.status = "not-started"
+                task.status = "interrupted"
                 save_task_set(self.task_set, project_dir)
                 break
 
@@ -665,10 +694,18 @@ class TaskExecutor:
                 task.status = "failed"
                 failed += 1
 
+            # Record timing on the task object
+            task.elapsed_seconds = round(elapsed, 1)
+            task.last_run_at = datetime.now().isoformat()
+
             save_task_set(self.task_set, project_dir)
 
             rel_log = str(log_path.relative_to(project_dir))
             show_task_result(task_no, success, elapsed, rel_log)
+
+            # Record to tracker
+            if self._tracker:
+                self._tracker.record_result(task_no, task.task_name, success, elapsed)
 
             # Track result
             self._task_results.append(
@@ -681,9 +718,8 @@ class TaskExecutor:
                 }
             )
 
-            # Progress
-            current_done = sum(1 for t in all_tasks if t.status == "completed")
-            show_progress_bar(current_done, len(all_tasks))
+            # Update live status after result
+            save_live_status(self.run_context, None, dict(self._results), list(self._task_results))
 
         # Cleanup
         reset_terminal_title()
@@ -706,6 +742,7 @@ class TaskExecutor:
             total_done=total_done,
             total_elapsed=total_elapsed,
             interrupted=self.interrupted,
+            task_results=self._task_results,
         )
 
         return 0 if failed == 0 and not self.interrupted else 1

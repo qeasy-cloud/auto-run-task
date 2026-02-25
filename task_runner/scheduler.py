@@ -40,9 +40,9 @@ def schedule_tasks(
     if status_filter:
         tasks = [t for t in tasks if t.status == status_filter]
 
-    # Retry failed only
+    # Retry failed / interrupted only
     if retry_failed:
-        tasks = [t for t in tasks if t.status == "failed"]
+        tasks = [t for t in tasks if t.status in {"failed", "interrupted"}]
 
     # Start from a specific task
     if start_from:

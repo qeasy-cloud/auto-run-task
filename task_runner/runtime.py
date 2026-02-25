@@ -120,6 +120,39 @@ def save_run_summary(ctx: RunContext, results: dict, task_results: list[dict]):
         f.write("\n")
 
 
+def save_live_status(
+    ctx: RunContext, current_task: str | None, results: dict, task_results: list[dict]
+):
+    """Write a live status.json for external monitoring.
+
+    This file is updated during execution so external tools (dashboards,
+    CI watchers, scripts) can poll the current state.
+    """
+    now = datetime.now()
+    started = datetime.fromisoformat(ctx.started_at)
+    elapsed = (now - started).total_seconds()
+
+    data = {
+        "run_id": ctx.run_id,
+        "task_set": ctx.task_set_name,
+        "status": "running" if current_task else "finishing",
+        "current_task": current_task,
+        "updated_at": now.isoformat(),
+        "elapsed_seconds": round(elapsed, 1),
+        "total_tasks": ctx.total_tasks,
+        "tasks_to_execute": ctx.tasks_to_execute,
+        "results": results,
+        "completed_tasks": task_results,
+    }
+
+    status_json = ctx.run_dir / "status.json"
+    tmp_path = status_json.with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    tmp_path.replace(status_json)
+
+
 def backup_task_set(project_dir: Path, task_set_name: str):
     """Backup a task set file to runtime/backups/."""
     src = project_dir / f"{task_set_name}.tasks.json"

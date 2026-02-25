@@ -212,6 +212,27 @@ def _add_execution_options(parser):
         help="Check workspace git status and create safety tag before execution",
     )
 
+    # Output control
+    output_group = parser.add_argument_group("output control")
+    verbosity = output_group.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show extra detail (heartbeat each 15s, full paths)",
+    )
+    verbosity.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Minimal output (suppress banner, heartbeat, live panel)",
+    )
+    output_group.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable color output (useful for CI/piped output)",
+    )
+
 
 def _add_list_subparser(subparsers):
     """Add the 'list' subcommand."""

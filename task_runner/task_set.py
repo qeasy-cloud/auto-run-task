@@ -46,6 +46,8 @@ class Task:
     prompt: str | None = None  # Per-task template override
     cli: TaskCLIConfig = field(default_factory=TaskCLIConfig)
     depends_on: str | None = None
+    elapsed_seconds: float | None = None  # Execution time (written after completion)
+    last_run_at: str | None = None  # ISO timestamp of last execution
     _raw: dict = field(default_factory=dict, repr=False)
 
     def to_dict(self) -> dict:
@@ -67,6 +69,10 @@ class Task:
             d["cli"] = self.cli.to_dict()
         if self.depends_on:
             d["depends_on"] = self.depends_on
+        if self.elapsed_seconds is not None:
+            d["elapsed_seconds"] = self.elapsed_seconds
+        if self.last_run_at:
+            d["last_run_at"] = self.last_run_at
         return d
 
     @classmethod
@@ -81,6 +87,8 @@ class Task:
             prompt=d.get("prompt"),
             cli=TaskCLIConfig.from_dict(d.get("cli")),
             depends_on=d.get("depends_on"),
+            elapsed_seconds=d.get("elapsed_seconds"),
+            last_run_at=d.get("last_run_at"),
             _raw=dict(d),
         )
 
@@ -201,13 +209,15 @@ def get_task_set_stats(task_set: TaskSet) -> dict:
     total = len(tasks)
     completed = sum(1 for t in tasks if t.status == "completed")
     failed = sum(1 for t in tasks if t.status == "failed")
+    interrupted = sum(1 for t in tasks if t.status == "interrupted")
     in_progress = sum(1 for t in tasks if t.status == "in-progress")
-    not_started = total - completed - failed - in_progress
+    not_started = total - completed - failed - interrupted - in_progress
 
     return {
         "total": total,
         "completed": completed,
         "failed": failed,
+        "interrupted": interrupted,
         "in_progress": in_progress,
         "not_started": not_started,
         "remaining": total - completed,

@@ -122,6 +122,19 @@ def _execute(args, dry_run: bool = False) -> int:
     # ── Heartbeat ──
     heartbeat = getattr(args, "heartbeat", 60)
 
+    # ── Output control ──
+    verbose = getattr(args, "verbose", False)
+    quiet = getattr(args, "quiet", False)
+    no_color = getattr(args, "no_color", False)
+
+    if no_color:
+        from ..display import console as _console
+
+        _console.no_color = True
+
+    if verbose:
+        heartbeat = min(heartbeat, 15)  # More frequent heartbeats in verbose mode
+
     # ── Create run context ──
     filters = {
         "batch": batch_filter,
@@ -178,6 +191,8 @@ def _execute(args, dry_run: bool = False) -> int:
         workspace=workspace,
         template_override=template_override,
         git_safety=git_safety,
+        verbose=verbose,
+        quiet=quiet,
     )
 
     result_code = executor.run()
