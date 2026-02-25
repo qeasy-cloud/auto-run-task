@@ -1,0 +1,59 @@
+{
+  "template": "prompt-feature-dev.md",
+  "tasks": [
+    {
+      "task_no": "F-1",
+      "task_name": "创建 Product 模型",
+      "batch": 1,
+      "module": "apps/product",
+      "type": "model",
+      "status": "not-started",
+      "description": "创建 Product 模型，包含 name, code, description, price, is_active 字段，继承 TenantAwareModel",
+      "estimated_minutes": 10
+    },
+    {
+      "task_no": "F-2",
+      "task_name": "创建 Product 序列化器",
+      "batch": 1,
+      "module": "apps/product",
+      "type": "serializer",
+      "status": "not-started",
+      "description": "创建 List/Detail/Create/Update 四件套序列化器",
+      "depends_on": "F-1",
+      "estimated_minutes": 8
+    },
+    {
+      "task_no": "F-3",
+      "task_name": "创建 Product 视图集",
+      "batch": 1,
+      "module": "apps/product",
+      "type": "viewset",
+      "status": "not-started",
+      "description": "创建 ProductViewSet，继承 TenantAwareViewSet + FetchMixin，配置 OpenAPI tags",
+      "depends_on": "F-2",
+      "estimated_minutes": 8
+    },
+    {
+      "task_no": "F-4",
+      "task_name": "配置路由和迁移",
+      "batch": 1,
+      "module": "apps/product",
+      "type": "config",
+      "status": "not-started",
+      "description": "注册路由到 urls.py，创建数据库迁移，运行 migrate",
+      "depends_on": "F-3",
+      "estimated_minutes": 5
+    },
+    {
+      "task_no": "F-5",
+      "task_name": "编写 Product 单元测试",
+      "batch": 2,
+      "module": "apps/product",
+      "type": "test",
+      "status": "not-started",
+      "description": "编写 CRUD 接口测试，覆盖创建、查询、更新、删除场景",
+      "depends_on": "F-4",
+      "estimated_minutes": 15
+    }
+  ]
+}

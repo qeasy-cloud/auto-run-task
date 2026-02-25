@@ -1,0 +1,868 @@
+"""
+Task execution engine for Auto Task Runner v3.0.
+
+Handles:
+  - PTY-based subprocess execution (preserves colors)
+  - Fallback to PIPE mode if PTY fails
+  - Real-time output streaming + log file capture
+  - Heartbeat thread for status updates + terminal title
+  - Signal handling (CTRL+C graceful / double-CTRL+C force)
+  - State persistence after every task
+  - Per-task tool/model configuration
+"""
+
+import atexit
+import errno
+import json
+import os
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+
+from .config import PROXY_ENV_KEYS, ToolConfig, get_tool_config
+from .display import (
+    console,
+    reset_terminal_title,
+    set_terminal_title,
+    show_all_done,
+    show_available_models,
+    show_banner,
+    show_dry_run_skip,
+    show_error,
+    show_force_exit,
+    show_heartbeat,
+    show_info,
+    show_interrupt,
+    show_progress_bar,
+    show_task_cmd,
+    show_task_list,
+    show_task_prompt_info,
+    show_task_result,
+    show_task_running,
+    show_task_skip,
+    show_task_start,
+    show_summary,
+    show_tool_not_found,
+    show_warning,
+    SPINNER_FRAMES,
+)
+from .renderer import render_prompt
+from .state import find_start_index, get_task_stats, load_plan, save_plan
+
+
+class TaskExecutor:
+    """
+    Main execution engine — manages the full lifecycle of batch task execution.
+
+    Supports both v3 (project-based) and legacy (plan-based) modes.
+    """
+
+    def __init__(self, **kwargs):
+        """
+        Initialize the executor.
+
+        v3 mode kwargs:
+            project_config, task_set, scheduled_tasks, run_context,
+            tool_config, model, use_proxy, dry_run, heartbeat_interval,
+            workspace, template_override, git_safety
+
+        Legacy mode kwargs:
+            args (argparse.Namespace from legacy parser)
+        """
+        if "args" in kwargs:
+            self._init_legacy(kwargs["args"])
+        else:
+            self._init_v3(**kwargs)
+
+        # Runtime state (shared)
+        self.current_process: subprocess.Popen | None = None
+        self.interrupted: bool = False
+        self._ctrl_c_count: int = 0
+
+        # Heartbeat thread control
+        self._stop_heartbeat = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_start: float = 0
+        self._heartbeat_task_no: str = ""
+
+        # Results tracking (v3)
+        self._results = {"succeeded": 0, "failed": 0, "skipped": 0, "attempted": 0}
+        self._task_results: list[dict] = []
+
+    def _init_v3(self, **kwargs):
+        """Initialize for v3 project-based mode."""
+        self._mode = "v3"
+
+        from .project import ProjectConfig
+        from .runtime import RunContext
+        from .task_set import TaskSet
+
+        self.project_config: ProjectConfig = kwargs["project_config"]
+        self.task_set: TaskSet = kwargs["task_set"]
+        self.scheduled_tasks = kwargs["scheduled_tasks"]
+        self.run_context: RunContext = kwargs["run_context"]
+        self.tool_config: ToolConfig = kwargs["tool_config"]
+        self.model: str | None = kwargs.get("model")
+        self.use_proxy: bool = kwargs.get("use_proxy", True)
+        self.dry_run: bool = kwargs.get("dry_run", False)
+        self.heartbeat_interval: int = kwargs.get("heartbeat_interval", 60)
+        self.workspace: str = kwargs.get("workspace", "")
+        self.template_override: str | None = kwargs.get("template_override")
+        self.git_safety: bool = kwargs.get("git_safety", False)
+
+        self.work_dir = Path(self.workspace) if self.workspace else None
+
+    def _init_legacy(self, args):
+        """Initialize for legacy --plan mode."""
+        self._mode = "legacy"
+        self.args = args
+        self.plan_path: Path = args.plan_path
+        self.template_path: Path | None = args.template_path
+        self.project_name: str = args.project
+        self.tool_config = args.tool_config
+        self.model: str | None = args.model
+        self.use_proxy: bool = args.use_proxy
+        self.dry_run: bool = args.dry_run
+        self.heartbeat_interval: int = args.heartbeat
+
+        self.work_dir: Path | None = args.work_dir_path
+        self.project_dir: Path | None = None
+        self.tasks_dir: Path | None = None
+        self.logs_dir: Path | None = None
+
+    # ─── Results Access (v3) ─────────────────────────────────────
+
+    def get_results(self) -> dict:
+        return dict(self._results)
+
+    def get_task_results(self) -> list[dict]:
+        return list(self._task_results)
+
+    # ─── Legacy Setup ────────────────────────────────────────────
+
+    def _detect_work_dir(self) -> Path:
+        """Auto-detect project root by searching for common markers."""
+        markers = ["manage.py", "pyproject.toml", ".git", "Makefile", "package.json"]
+        path = self.plan_path.parent
+
+        while path != path.parent:
+            if any((path / m).exists() for m in markers):
+                return path
+            path = path.parent
+
+        return Path.cwd()
+
+    def _setup_directories(self):
+        """Create project output directories (legacy mode)."""
+        if self.work_dir is None:
+            self.work_dir = self._detect_work_dir()
+
+        self.project_dir = self.plan_path.parent / self.project_name
+        self.tasks_dir = self.project_dir / "tasks"
+        self.logs_dir = self.project_dir / "logs"
+
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_template(self, plan: dict) -> str | None:
+        """Resolve and load the template content (legacy mode)."""
+        if self.template_path:
+            return self.template_path.read_text(encoding="utf-8")
+
+        template_rel = plan.get("template")
+        if template_rel:
+            template_path = self.plan_path.parent / template_rel
+            if template_path.exists():
+                self.template_path = template_path
+                return template_path.read_text(encoding="utf-8")
+            else:
+                show_warning(f"Template from plan not found: {template_path}")
+
+        return None
+
+    # ─── V3 Template Resolution ──────────────────────────────────
+
+    def _resolve_template_v3(self, task) -> str | None:
+        """Resolve template for a v3 task. Per-task > override > task_set > default."""
+        from .project import get_project_dir
+
+        project_dir = get_project_dir(self.project_config.project)
+
+        # 1. Per-task template override
+        if task.prompt:
+            tpl_path = project_dir / task.prompt
+            if tpl_path.exists():
+                return tpl_path.read_text(encoding="utf-8")
+
+        # 2. CLI override
+        if self.template_override:
+            tpl_path = Path(self.template_override)
+            if not tpl_path.is_absolute():
+                tpl_path = project_dir / tpl_path
+            if tpl_path.exists():
+                return tpl_path.read_text(encoding="utf-8")
+
+        # 3. Task set default template
+        if self.task_set.template:
+            tpl_path = project_dir / self.task_set.template
+            if tpl_path.exists():
+                return tpl_path.read_text(encoding="utf-8")
+
+        # 4. Project default template
+        default_tpl = project_dir / "templates" / "__init__.md"
+        if default_tpl.exists():
+            return default_tpl.read_text(encoding="utf-8")
+
+        return None
+
+    # ─── Shared Infrastructure ───────────────────────────────────
+
+    def _check_tool_available(self, tool_name: str | None = None) -> bool:
+        """Verify the CLI tool binary exists in PATH."""
+        name = tool_name or self.tool_config.name
+        if shutil.which(name) is None:
+            show_tool_not_found(name)
+            return False
+        return True
+
+    def _setup_signals(self):
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+
+    def _signal_handler(self, sig, frame):
+        self._ctrl_c_count += 1
+        self.interrupted = True
+
+        if self._ctrl_c_count == 1:
+            show_interrupt()
+            self._kill_child()
+        elif self._ctrl_c_count >= 2:
+            show_force_exit()
+            self._force_kill()
+            os._exit(130)
+
+    def _kill_child(self):
+        proc = self.current_process
+        if not proc or proc.poll() is not None:
+            return
+
+        try:
+            pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError):
+            return
+
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            return
+
+        for _ in range(50):
+            if proc.poll() is not None:
+                return
+            time.sleep(0.1)
+
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+
+    def _force_kill(self):
+        proc = self.current_process
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except Exception:
+                pass
+
+    def _make_env(self) -> dict:
+        env = os.environ.copy()
+        if not self.use_proxy:
+            keys_to_remove = [
+                k for k in env
+                if k in PROXY_ENV_KEYS or k.lower() in [v.lower() for v in PROXY_ENV_KEYS]
+            ]
+            for key in keys_to_remove:
+                del env[key]
+        return env
+
+    def _build_command(self, task_file: Path, tool_config: ToolConfig | None = None,
+                       model: str | None = None) -> str:
+        tc = tool_config or self.tool_config
+        m = model or self.model
+        cmd = tc.cmd_template
+        cmd = cmd.replace("{task_file}", str(task_file))
+        if m:
+            cmd = cmd.replace("{model}", m)
+        return cmd
+
+    # ─── Heartbeat ───────────────────────────────────────────────
+
+    def _start_heartbeat(self, task_no: str):
+        self._stop_heartbeat.clear()
+        self._heartbeat_start = time.time()
+        self._heartbeat_task_no = task_no
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat_fn(self):
+        self._stop_heartbeat.set()
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=3)
+            self._heartbeat_thread = None
+
+    def _heartbeat_loop(self):
+        tick = 0
+        while not self._stop_heartbeat.is_set():
+            self._stop_heartbeat.wait(1.0)
+            if self._stop_heartbeat.is_set():
+                break
+
+            tick += 1
+            elapsed = time.time() - self._heartbeat_start
+            mins, secs = divmod(int(elapsed), 60)
+            hours, mins_r = divmod(mins, 60)
+
+            if hours > 0:
+                time_str = f"{hours}h{mins_r:02d}m{secs:02d}s"
+            else:
+                time_str = f"{mins}m{secs:02d}s"
+
+            spinner = SPINNER_FRAMES[tick % len(SPINNER_FRAMES)]
+
+            set_terminal_title(
+                f"{spinner} {time_str} | Task {self._heartbeat_task_no} | Auto Task Runner"
+            )
+
+            if tick % self.heartbeat_interval == 0:
+                show_heartbeat(self._heartbeat_task_no, elapsed, tick)
+
+    # ─── Task Execution (PTY / PIPE) ────────────────────────────
+
+    def _execute_with_pty(self, cmd: str, log_path: Path) -> tuple[int, float]:
+        import pty as pty_module
+
+        master_fd, slave_fd = pty_module.openpty()
+
+        try:
+            import struct
+            import fcntl
+            import termios
+
+            size = struct.pack("HHHH", 50, 120, 0, 0)
+            try:
+                size = fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, size)
+            except (IOError, OSError):
+                pass
+            fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, size)
+        except (ImportError, IOError, OSError):
+            pass
+
+        self.current_process = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            stdin=subprocess.DEVNULL,
+            preexec_fn=os.setsid,
+            close_fds=True,
+            env=self._make_env(),
+            cwd=str(self.work_dir) if self.work_dir else None,
+        )
+        os.close(slave_fd)
+
+        start_time = time.time()
+
+        with open(log_path, "wb") as log_file:
+            while True:
+                if self.interrupted:
+                    break
+
+                try:
+                    ready, _, _ = select.select([master_fd], [], [], 0.5)
+                except (ValueError, OSError):
+                    break
+
+                if ready:
+                    try:
+                        data = os.read(master_fd, 8192)
+                        if not data:
+                            break
+                        os.write(sys.stdout.fileno(), data)
+                        log_file.write(data)
+                        log_file.flush()
+                    except OSError as e:
+                        if e.errno == errno.EIO:
+                            break
+                        raise
+
+                if self.current_process.poll() is not None:
+                    self._drain_fd(master_fd, log_file)
+                    break
+
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+        try:
+            self.current_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self._kill_child()
+
+        return_code = (
+            self.current_process.returncode
+            if self.current_process and self.current_process.returncode is not None
+            else -1
+        )
+        elapsed = time.time() - start_time
+        self.current_process = None
+
+        return return_code, elapsed
+
+    def _execute_with_pipe(self, cmd: str, log_path: Path) -> tuple[int, float]:
+        self.current_process = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            preexec_fn=os.setsid,
+            env=self._make_env(),
+            cwd=str(self.work_dir) if self.work_dir else None,
+        )
+
+        start_time = time.time()
+
+        with open(log_path, "wb") as log_file:
+            for line in iter(self.current_process.stdout.readline, b""):
+                if self.interrupted:
+                    break
+                os.write(sys.stdout.fileno(), line)
+                log_file.write(line)
+                log_file.flush()
+
+        try:
+            self.current_process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self._kill_child()
+
+        return_code = (
+            self.current_process.returncode
+            if self.current_process and self.current_process.returncode is not None
+            else -1
+        )
+        elapsed = time.time() - start_time
+        self.current_process = None
+
+        return return_code, elapsed
+
+    def execute_task(self, cmd: str, log_path: Path) -> tuple[int, float]:
+        try:
+            return self._execute_with_pty(cmd, log_path)
+        except Exception as e:
+            show_warning(f"PTY mode failed ({e}), falling back to PIPE mode")
+            return self._execute_with_pipe(cmd, log_path)
+
+    @staticmethod
+    def _drain_fd(fd: int, log_file):
+        for _ in range(100):
+            try:
+                ready, _, _ = select.select([fd], [], [], 0.1)
+                if not ready:
+                    break
+                data = os.read(fd, 8192)
+                if not data:
+                    break
+                os.write(sys.stdout.fileno(), data)
+                log_file.write(data)
+                log_file.flush()
+            except OSError:
+                break
+
+    # ─── Git Safety ──────────────────────────────────────────────
+
+    def _git_safety_check(self):
+        """Check workspace git status and create safety tag."""
+        if not self.work_dir or not (self.work_dir / ".git").exists():
+            show_warning("Git safety: not a git repository, skipping")
+            return
+
+        import subprocess as sp
+
+        # Check for uncommitted changes
+        result = sp.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(self.work_dir),
+            capture_output=True, text=True,
+        )
+        if result.stdout.strip():
+            show_warning(f"Git safety: workspace has uncommitted changes ({len(result.stdout.strip().splitlines())} files)")
+
+        # Create safety tag
+        tag_name = f"auto-run-task/{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        sp.run(
+            ["git", "tag", tag_name],
+            cwd=str(self.work_dir),
+            capture_output=True,
+        )
+        show_info(f"Git safety: created tag '{tag_name}'")
+
+    # ─── Main Entry Point ────────────────────────────────────────
+
+    def run(self) -> int:
+        """Main entry point — dispatch to v3 or legacy mode."""
+        if self._mode == "v3":
+            return self._run_v3()
+        else:
+            return self._run_legacy()
+
+    # ─── V3 Mode ─────────────────────────────────────────────────
+
+    def _run_v3(self) -> int:
+        """Execute tasks in v3 project-based mode."""
+        from .project import get_project_dir
+        from .task_set import save_task_set
+
+        self._setup_signals()
+
+        project_dir = get_project_dir(self.project_config.project)
+        tasks = self.scheduled_tasks
+        total = len(tasks)
+
+        if total == 0:
+            show_all_done()
+            return 0
+
+        # Git safety check
+        if self.git_safety:
+            self._git_safety_check()
+
+        # Check tool availability (skip for dry-run)
+        if not self.dry_run and not self._check_tool_available():
+            return 1
+
+        # Build stats for banner
+        all_tasks = self.task_set.tasks
+        done_count = sum(1 for t in all_tasks if t.status == "completed")
+        remaining = len(all_tasks) - done_count
+
+        # Show banner
+        from .display import show_banner_v3
+
+        show_banner_v3(
+            project=self.project_config.project,
+            task_set=self.task_set.name,
+            tool=self.tool_config.name,
+            model=self.model,
+            workspace=str(self.work_dir or self.workspace),
+            run_id=self.run_context.run_id,
+            total=len(all_tasks),
+            done=done_count,
+            remaining=remaining,
+            to_execute=total,
+            use_proxy=self.use_proxy,
+        )
+
+        atexit.register(reset_terminal_title)
+
+        # Execute tasks
+        succeeded = 0
+        failed = 0
+        skipped = 0
+        run_start = time.time()
+
+        for idx, task in enumerate(tasks):
+            if self.interrupted:
+                break
+
+            task_no = task.task_no
+
+            # Skip completed
+            if task.status == "completed":
+                show_task_skip(task_no)
+                skipped += 1
+                continue
+
+            # Show task info
+            show_task_start(idx, total, task.to_dict())
+
+            # Resolve template
+            template = self._resolve_template_v3(task)
+            if template:
+                prompt_content = render_prompt(template, task._raw)
+            else:
+                prompt_content = json.dumps(task._raw, ensure_ascii=False, indent=2)
+
+            # Write prompt file
+            prompt_path = self.run_context.get_prompt_path(task_no)
+            prompt_path.write_text(prompt_content, encoding="utf-8")
+
+            rel_prompt = str(prompt_path.relative_to(project_dir))
+            show_task_prompt_info(rel_prompt)
+
+            if self.dry_run:
+                show_dry_run_skip(task_no)
+                continue
+
+            # Resolve per-task tool/model
+            task_tool_config = self.tool_config
+            task_model = self.model
+            if task.cli.tool:
+                try:
+                    task_tool_config = get_tool_config(task.cli.tool)
+                except KeyError:
+                    show_warning(f"Unknown tool '{task.cli.tool}' for task {task_no}, using default")
+            if task.cli.model:
+                task_model = task.cli.model
+
+            # Check task-specific tool availability
+            if task_tool_config.name != self.tool_config.name:
+                if not self._check_tool_available(task_tool_config.name):
+                    task.status = "failed"
+                    save_task_set(self.task_set, project_dir)
+                    failed += 1
+                    continue
+
+            # Build command
+            cmd = self._build_command(prompt_path, task_tool_config, task_model)
+            show_task_cmd(cmd)
+
+            # Update status
+            task.status = "in-progress"
+            save_task_set(self.task_set, project_dir)
+
+            # Log file
+            log_path = self.run_context.get_log_path(task_no)
+
+            # Execute
+            show_task_running()
+            self._start_heartbeat(task_no)
+
+            return_code, elapsed = self.execute_task(cmd, log_path)
+
+            self._stop_heartbeat_fn()
+
+            if self.interrupted:
+                task.status = "not-started"
+                save_task_set(self.task_set, project_dir)
+                break
+
+            # Record result
+            success = return_code == 0
+            if success:
+                task.status = "completed"
+                succeeded += 1
+            else:
+                task.status = "failed"
+                failed += 1
+
+            save_task_set(self.task_set, project_dir)
+
+            rel_log = str(log_path.relative_to(project_dir))
+            show_task_result(task_no, success, elapsed, rel_log)
+
+            # Track result
+            self._task_results.append({
+                "task_no": task_no,
+                "status": task.status,
+                "duration_seconds": round(elapsed, 1),
+                "return_code": return_code,
+                "log_file": f"logs/{task_no.replace('/', '_').replace(chr(92), '_')}.log",
+            })
+
+            # Progress
+            current_done = sum(1 for t in all_tasks if t.status == "completed")
+            show_progress_bar(current_done, len(all_tasks))
+
+        # Cleanup
+        reset_terminal_title()
+
+        total_elapsed = time.time() - run_start
+        total_done = sum(1 for t in all_tasks if t.status == "completed")
+
+        self._results = {
+            "succeeded": succeeded,
+            "failed": failed,
+            "skipped": skipped,
+            "attempted": succeeded + failed,
+        }
+
+        show_summary(
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+            total=len(all_tasks),
+            total_done=total_done,
+            total_elapsed=total_elapsed,
+            interrupted=self.interrupted,
+        )
+
+        return 0 if failed == 0 and not self.interrupted else 1
+
+    # ─── Legacy Mode ─────────────────────────────────────────────
+
+    def _run_legacy(self) -> int:
+        """Execute the full task pipeline in legacy mode (v2 behavior)."""
+        self._setup_signals()
+
+        try:
+            plan = load_plan(self.plan_path)
+        except (json.JSONDecodeError, FileNotFoundError, ValueError) as e:
+            show_error(f"Failed to load plan: {e}")
+            return 1
+
+        tasks = plan.get("tasks", [])
+        if not tasks:
+            show_error("No tasks found in plan!")
+            return 1
+
+        if self.args.list_tasks:
+            show_task_list(tasks)
+            return 0
+
+        if self.args.list_models:
+            if self.tool_config.supports_model:
+                show_available_models(
+                    self.tool_config.name,
+                    self.tool_config.models,
+                    self.tool_config.default_model,
+                )
+            else:
+                show_info(f"Tool '{self.tool_config.name}' does not support model selection.")
+            return 0
+
+        template = self._resolve_template(plan)
+        if template is None and not self.dry_run:
+            show_error("No template specified! Use --template or add 'template' key in plan JSON.")
+            return 1
+
+        if not self.dry_run and not self._check_tool_available():
+            return 1
+
+        self._setup_directories()
+
+        start_idx = find_start_index(tasks, self.args.start)
+        if start_idx == -1:
+            show_error(f"Task '{self.args.start}' not found!")
+            available = ", ".join(t.get("task_no", "?") for t in tasks[:20])
+            console.print(f"  [dim]Available: {available}[/dim]")
+            return 1
+
+        total = len(tasks)
+        if start_idx >= total:
+            show_all_done()
+            return 0
+
+        stats = get_task_stats(tasks)
+
+        show_banner(
+            project=self.project_name,
+            tool=self.tool_config.name,
+            model=self.model,
+            plan_path=str(self.plan_path),
+            template_path=(str(self.template_path) if self.template_path else "(from plan)"),
+            total=stats["total"],
+            done=stats["completed"],
+            remaining=stats["remaining"],
+            use_proxy=self.use_proxy,
+            work_dir=str(self.work_dir),
+        )
+
+        atexit.register(reset_terminal_title)
+
+        succeeded = 0
+        failed = 0
+        skipped = 0
+        run_start = time.time()
+
+        for idx in range(start_idx, total):
+            if self.interrupted:
+                break
+
+            task = tasks[idx]
+            task_no = task.get("task_no", f"#{idx + 1}")
+            status = task.get("status", "not-started")
+
+            if status == "completed":
+                show_task_skip(task_no)
+                skipped += 1
+                continue
+
+            show_task_start(idx, total, task)
+
+            if template:
+                prompt_content = render_prompt(template, task)
+            else:
+                prompt_content = json.dumps(task, ensure_ascii=False, indent=2)
+
+            safe_name = task_no.replace("/", "_").replace("\\", "_")
+            task_file = self.tasks_dir / f"{safe_name}_task.md"
+            task_file.write_text(prompt_content, encoding="utf-8")
+
+            rel_prompt = str(task_file.relative_to(self.plan_path.parent))
+            show_task_prompt_info(rel_prompt)
+
+            if self.dry_run:
+                show_dry_run_skip(task_no)
+                continue
+
+            cmd = self._build_command(task_file)
+            show_task_cmd(cmd)
+
+            task["status"] = "in-progress"
+            save_plan(self.plan_path, plan)
+
+            now = datetime.now()
+            log_name = f"{safe_name}_{now.strftime('%H:%M')}.log"
+            log_path = self.logs_dir / log_name
+
+            show_task_running()
+            self._start_heartbeat(task_no)
+
+            return_code, elapsed = self.execute_task(cmd, log_path)
+
+            self._stop_heartbeat_fn()
+
+            if self.interrupted:
+                task["status"] = "not-started"
+                save_plan(self.plan_path, plan)
+                break
+
+            success = return_code == 0
+            if success:
+                task["status"] = "completed"
+                succeeded += 1
+            else:
+                task["status"] = "failed"
+                failed += 1
+
+            save_plan(self.plan_path, plan)
+
+            rel_log = str(log_path.relative_to(self.plan_path.parent))
+            show_task_result(task_no, success, elapsed, rel_log)
+
+            current_done = sum(1 for t in tasks if t.get("status") == "completed")
+            show_progress_bar(current_done, total)
+
+        reset_terminal_title()
+
+        total_elapsed = time.time() - run_start
+        total_done = sum(1 for t in tasks if t.get("status") == "completed")
+
+        show_summary(
+            succeeded=succeeded,
+            failed=failed,
+            skipped=skipped,
+            total=total,
+            total_done=total_done,
+            total_elapsed=total_elapsed,
+            interrupted=self.interrupted,
+        )
+
+        return 0 if failed == 0 and not self.interrupted else 1

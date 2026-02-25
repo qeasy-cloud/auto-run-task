@@ -1,0 +1,15 @@
+{
+    "project":"FIX_CODE",
+    "description":"A project to fix code issues in the repository.",
+    "workspace":"/home/vincent/workspace/qdatav2/qdatav2-server",
+    "status":"planned",
+    "run_record":[
+        {
+            "run_at":"2024-06-01_10-00-00",
+            "stop_at":"2024-06-01_12-00-00",
+            "cumulated_minutes":120,
+            "status":"completed",
+            "task_set_name":"code-quality-fix"
+        }
+    ]
+}

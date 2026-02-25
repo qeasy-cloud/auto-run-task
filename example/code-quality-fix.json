@@ -1,0 +1,78 @@
+{
+  "template": "prompt-code-fix.md",
+  "tasks": [
+    {
+      "task_no": "1-A",
+      "task_name": "module_a: 自动格式化 (black + isort)",
+      "batch": 1,
+      "module": "src/module_a",
+      "type": "auto",
+      "status": "not-started",
+      "command": "black src/module_a/ && isort src/module_a/",
+      "commit_msg": "style(module_a): apply black + isort formatting",
+      "priority": 3
+    },
+    {
+      "task_no": "1-B",
+      "task_name": "module_a: 手动修复 Flake8 错误",
+      "batch": 1,
+      "module": "src/module_a",
+      "type": "manual",
+      "status": "not-started",
+      "errors": {
+        "F401": 12,
+        "F821": 3,
+        "C901": 2,
+        "other": 5
+      },
+      "commit_msg": "fix(module_a): resolve flake8 errors",
+      "estimated_minutes": 10
+    },
+    {
+      "task_no": "1-V",
+      "task_name": "module_a: 验证零错误",
+      "batch": 1,
+      "module": "src/module_a",
+      "type": "verify",
+      "status": "not-started",
+      "command": "flake8 src/module_a/ && black src/module_a/ --check && isort src/module_a/ --check-only",
+      "estimated_minutes": 1
+    },
+    {
+      "task_no": "2-A",
+      "task_name": "module_b: 自动格式化 (black + isort)",
+      "batch": 2,
+      "module": "src/module_b",
+      "type": "auto",
+      "status": "not-started",
+      "command": "black src/module_b/ && isort src/module_b/",
+      "commit_msg": "style(module_b): apply black + isort formatting",
+      "estimated_minutes": 3
+    },
+    {
+      "task_no": "2-B",
+      "task_name": "module_b: 手动修复 Flake8 错误",
+      "batch": 2,
+      "module": "src/module_b",
+      "type": "manual",
+      "status": "not-started",
+      "errors": {
+        "F401": 8,
+        "E501": 15,
+        "other": 3
+      },
+      "commit_msg": "fix(module_b): resolve flake8 errors",
+      "estimated_minutes": 8
+    },
+    {
+      "task_no": "2-V",
+      "task_name": "module_b: 验证零错误",
+      "batch": 2,
+      "module": "src/module_b",
+      "type": "verify",
+      "status": "not-started",
+      "command": "flake8 src/module_b/ && black src/module_b/ --check && isort src/module_b/ --check-only",
+      "estimated_minutes": 1
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# Virtual environment
+.task_env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Runtime output (generated per project)
+# These are created alongside the plan JSON file, not in repo root,
+# but exclude them just in case someone runs in the repo directory.
+tasks/
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+projects/
+.mypy_cache
