@@ -258,15 +258,17 @@ def build_task_failure_message(
     lines.append(f"**耗时:** {elapsed}")
     if log_file:
         lines.append(f"**日志文件:** {log_file}")
-    compact_output = _compact_result_text(output_tail)
+
+    suffix_lines = ["", "> 播报来源：轻易云自动机器人"]
+    compact_output = _fit_output_by_budget(lines, output_tail, suffix_lines)
     if compact_output:
         lines.append("")
         lines.append("### 最终结果输出")
         lines.append("```text")
         lines.append(compact_output)
         lines.append("```")
-    lines.append("")
-    lines.append("> 播报来源：轻易云自动机器人")
+
+    lines.extend(suffix_lines)
     return "\n".join(lines)
 
 
@@ -333,7 +335,22 @@ def build_task_complete_message(
     if log_file:
         lines.append(f"**日志文件:** {log_file}")
 
-    compact_output = _compact_result_text(output_tail)
+    suffix_lines: list[str] = [""]
+    if next_task_no and next_task_name:
+        suffix_lines.append("### 下一任务预告")
+        suffix_lines.append(f"- {next_task_no} {next_task_name}")
+        if next_tool:
+            suffix_lines.append(f"- 工具: {next_tool}")
+        if next_model:
+            suffix_lines.append(f"- 模型: {next_model}")
+    else:
+        suffix_lines.append("### 下一任务预告")
+        suffix_lines.append("- 当前任务集已无待执行任务")
+
+    suffix_lines.append("")
+    suffix_lines.append("> 播报来源：轻易云自动机器人")
+
+    compact_output = _fit_output_by_budget(lines, output_tail, suffix_lines)
     if compact_output:
         lines.append("")
         lines.append("### 最终结果输出")
@@ -341,20 +358,7 @@ def build_task_complete_message(
         lines.append(compact_output)
         lines.append("```")
 
-    lines.append("")
-    if next_task_no and next_task_name:
-        lines.append("### 下一任务预告")
-        lines.append(f"- {next_task_no} {next_task_name}")
-        if next_tool:
-            lines.append(f"- 工具: {next_tool}")
-        if next_model:
-            lines.append(f"- 模型: {next_model}")
-    else:
-        lines.append("### 下一任务预告")
-        lines.append("- 当前任务集已无待执行任务")
-
-    lines.append("")
-    lines.append("> 播报来源：轻易云自动机器人")
+    lines.extend(suffix_lines)
     return "\n".join(lines)
 
 
@@ -409,6 +413,43 @@ def _compact_result_text(text: str | None, *, max_lines: int = 10, max_chars: in
         compact = compact[-max_chars:]
         compact = f"...(截断)\n{compact}"
     return compact
+
+
+def _fit_output_by_budget(
+    prefix_lines: list[str],
+    output_tail: str | None,
+    suffix_lines: list[str],
+    *,
+    target_bytes: int = WECOM_MAX_CONTENT_BYTES,
+) -> str:
+    """Fit output snippet within byte budget while keeping key fields visible.
+
+    Strategy:
+      1) Reserve space for prefix + suffix + wrapper markdown.
+      2) Iteratively shrink output (lines/chars/bytes) until total fits.
+      3) Fall back to empty output when budget is insufficient.
+    """
+    if not output_tail or not output_tail.strip():
+        return ""
+
+    wrapper = ["", "### 最终结果输出", "```text", "", "```"]
+    base_bytes = len("\n".join(prefix_lines + wrapper + suffix_lines).encode("utf-8"))
+    available = target_bytes - base_bytes - 96
+    if available <= 80:
+        return ""
+
+    max_lines = 18
+    max_chars = min(2200, max(300, available * 2))
+
+    for _ in range(8):
+        compact = _compact_result_text(output_tail, max_lines=max_lines, max_chars=max_chars)
+        compact_bytes = len(compact.encode("utf-8"))
+        if compact_bytes <= available:
+            return compact
+        max_lines = max(3, max_lines - 2)
+        max_chars = max(120, int(max_chars * 0.7))
+
+    return _compact_result_text(output_tail, max_lines=3, max_chars=120)
 
 
 def _build_ssl_context() -> ssl.SSLContext:

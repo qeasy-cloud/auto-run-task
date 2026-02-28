@@ -444,6 +444,31 @@ class TestBuildTaskCompleteMessage:
         assert "M11" in msg
         assert "opus-4.6" in msg
 
+    def test_long_output_keeps_preview_and_under_wecom_limit(self):
+        long_output = "\n".join(f"line-{i}: " + ("x" * 120) for i in range(500))
+        msg = build_task_complete_message(
+            project="P",
+            task_set="ts",
+            task_no="M99",
+            task_name="超长输出测试",
+            elapsed="9m 12s",
+            tool="copilot",
+            model="claude-opus-4.6",
+            return_code=0,
+            progress_done=9,
+            progress_total=10,
+            output_tail=long_output,
+            log_file="runtime/20260228/logs/M99.log",
+            next_task_no="M100",
+            next_task_name="收尾任务",
+            next_tool="agent",
+            next_model="opus-4.6",
+        )
+        assert "下一任务预告" in msg
+        assert "M100" in msg
+        assert "最终结果输出" in msg
+        assert len(msg.encode("utf-8")) <= WECOM_MAX_CONTENT_BYTES
+
 
 # ─── Integration test with real webhook ──────────────────────────
 
