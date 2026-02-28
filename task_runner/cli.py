@@ -217,6 +217,14 @@ def _add_execution_options(parser):
         "Use '0' to disable, or a single number for fixed delay.",
     )
     ctrl_group.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="SEC",
+        help="Max execution time per task in seconds (default: 2400 = 40min). "
+        "The task is killed and marked failed if it exceeds this limit.",
+    )
+    ctrl_group.add_argument(
         "--git-safety",
         action="store_true",
         help="Check workspace git status and create safety tag before execution",
