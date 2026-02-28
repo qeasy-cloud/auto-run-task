@@ -159,6 +159,11 @@ python run.py run FIX_CODE code-quality-fix --work-dir /other/repo
 # Git 安全模式（执行前自动创建 git tag 作为回退点）
 python run.py run FIX_CODE code-quality-fix --git-safety
 
+# 单任务超时控制（默认 40 分钟 = 2400 秒）
+python run.py run FIX_CODE code-quality-fix --timeout 3600   # 60 分钟
+python run.py run FIX_CODE code-quality-fix --timeout 7200   # 2 小时（适合大型任务）
+python run.py run FIX_CODE code-quality-fix --timeout 600    # 10 分钟（快速任务）
+
 # 任务间延时控制（防止被检测为机器人）
 python run.py run FIX_CODE code-quality-fix --delay 60-120   # 随机 60~120s（默认）
 python run.py run FIX_CODE code-quality-fix --delay 30       # 固定 30s
@@ -433,7 +438,7 @@ python run.py run MY_PROJECT tasks
 | 机制 | 说明 |
 | --- | --- |
 | **最短执行时间** | AI CLI 执行不足 10 秒自动标记为失败（防止空跑误标成功） |
-| **单任务超时** | 默认 40 分钟，超时自动终止并标记失败，`--timeout` 可调整 |
+| **单任务超时** | 默认 40 分钟（2400 秒），超时自动终止并标记失败；`--timeout <秒数>` 可自定义，如 `--timeout 7200` 设为 2 小时 |
 | **任务间延时** | 默认随机等待 60-120 秒，降低触发反爬/封号风险，`--delay 0` 可关闭 |
 | **PTY 色彩保留** | 使用伪终端执行，AI CLI 的彩色输出原样呈现 |
 | **自动降级** | PTY 不可用时自动切换 PIPE 模式 |
