@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 try:
     import certifi
 except Exception:  # pragma: no cover - optional dependency
-    certifi = None  # type: ignore[assignment]
+    certifi = None
 
 # ─── Constants ────────────────────────────────────────────────────
 
@@ -181,15 +181,17 @@ def build_batch_complete_message(
 ) -> str:
     """Build a markdown_v2 message for batch / full completion."""
     if interrupted:
-        title = "Task Runner - 执行中断"
+        title = "🤖 轻易云自动机器人｜执行中断"
     elif failed > 0:
-        title = "Task Runner - 执行完成 (有失败)"
+        title = "🤖 轻易云自动机器人｜执行完成（有失败）"
     else:
-        title = "Task Runner - 全部完成"
+        title = "🤖 轻易云自动机器人｜全部完成"
 
     lines: list[str] = []
     lines.append(f"## {title}")
     lines.append("")
+    overall_status = "⚠️ 已中断" if interrupted else ("❌ 存在失败" if failed > 0 else "✅ 全部成功")
+    lines.append(f"**总体状态:** {overall_status}")
     lines.append(f"**项目:** {project}")
     lines.append(f"**任务集:** {task_set}")
     lines.append(f"**执行时间:** {start_time} ~ {end_time} ({duration})")
@@ -219,6 +221,9 @@ def build_batch_complete_message(
         lines.append("")
         lines.append("> 执行被用户中断 (Ctrl+C)")
 
+    lines.append("")
+    lines.append("> 播报来源：轻易云自动机器人")
+
     return "\n".join(lines)
 
 
@@ -230,15 +235,38 @@ def build_task_failure_message(
     task_name: str,
     failure_reason: str,
     elapsed: str,
+    tool: str | None = None,
+    model: str | None = None,
+    return_code: int | None = None,
+    output_tail: str | None = None,
+    log_file: str | None = None,
 ) -> str:
     """Build a markdown_v2 message for a single task failure."""
     lines: list[str] = []
-    lines.append("## Task Runner - 任务失败")
+    lines.append("## 🤖 轻易云自动机器人｜任务失败")
     lines.append("")
+    lines.append("**状态:** ❌ 失败")
     lines.append(f"**项目:** {project} / {task_set}")
     lines.append(f"**任务:** {task_no} {task_name}")
+    if tool:
+        lines.append(f"**执行工具:** {tool}")
+    if model:
+        lines.append(f"**模型:** {model}")
+    if return_code is not None:
+        lines.append(f"**退出码:** {return_code}")
     lines.append(f"**失败原因:** {failure_reason}")
     lines.append(f"**耗时:** {elapsed}")
+    if log_file:
+        lines.append(f"**日志文件:** {log_file}")
+    compact_output = _compact_result_text(output_tail)
+    if compact_output:
+        lines.append("")
+        lines.append("### 最终结果输出")
+        lines.append("```text")
+        lines.append(compact_output)
+        lines.append("```")
+    lines.append("")
+    lines.append("> 播报来源：轻易云自动机器人")
     return "\n".join(lines)
 
 
@@ -254,12 +282,15 @@ def build_interrupt_message(
     """Build a markdown_v2 message for execution interruption (Ctrl+C)."""
     now_str = datetime.now().strftime("%H:%M:%S")
     lines: list[str] = []
-    lines.append("## Task Runner - 执行中断")
+    lines.append("## 🤖 轻易云自动机器人｜执行中断")
     lines.append("")
+    lines.append("**状态:** ⚠️ 中断")
     lines.append(f"**项目:** {project} / {task_set}")
     lines.append(f"**中断时间:** {now_str}")
     lines.append(f"**当前任务:** {current_task_no} {current_task_name}")
     lines.append(f"**已完成:** {completed}/{total}")
+    lines.append("")
+    lines.append("> 播报来源：轻易云自动机器人")
     return "\n".join(lines)
 
 
@@ -270,14 +301,60 @@ def build_task_complete_message(
     task_no: str,
     task_name: str,
     elapsed: str,
+    tool: str | None = None,
+    model: str | None = None,
+    return_code: int | None = None,
+    progress_done: int | None = None,
+    progress_total: int | None = None,
+    output_tail: str | None = None,
+    log_file: str | None = None,
+    next_task_no: str | None = None,
+    next_task_name: str | None = None,
+    next_tool: str | None = None,
+    next_model: str | None = None,
 ) -> str:
     """Build a markdown_v2 message for a single task success (opt-in via --notify-each)."""
     lines: list[str] = []
-    lines.append("## Task Runner - 任务完成")
+    lines.append("## 🤖 轻易云自动机器人｜任务完成")
     lines.append("")
+    lines.append("**状态:** ✅ 成功")
     lines.append(f"**项目:** {project} / {task_set}")
     lines.append(f"**任务:** {task_no} {task_name}")
+    if tool:
+        lines.append(f"**执行工具:** {tool}")
+    if model:
+        lines.append(f"**模型:** {model}")
+    if return_code is not None:
+        lines.append(f"**退出码:** {return_code}")
     lines.append(f"**耗时:** {elapsed}")
+    if progress_done is not None and progress_total:
+        pct = (progress_done / progress_total) * 100
+        lines.append(f"**当前进度:** {progress_done}/{progress_total} ({pct:.1f}%)")
+    if log_file:
+        lines.append(f"**日志文件:** {log_file}")
+
+    compact_output = _compact_result_text(output_tail)
+    if compact_output:
+        lines.append("")
+        lines.append("### 最终结果输出")
+        lines.append("```text")
+        lines.append(compact_output)
+        lines.append("```")
+
+    lines.append("")
+    if next_task_no and next_task_name:
+        lines.append("### 下一任务预告")
+        lines.append(f"- {next_task_no} {next_task_name}")
+        if next_tool:
+            lines.append(f"- 工具: {next_tool}")
+        if next_model:
+            lines.append(f"- 模型: {next_model}")
+    else:
+        lines.append("### 下一任务预告")
+        lines.append("- 当前任务集已无待执行任务")
+
+    lines.append("")
+    lines.append("> 播报来源：轻易云自动机器人")
     return "\n".join(lines)
 
 
@@ -316,6 +393,22 @@ def _format_duration(seconds: float) -> str:
         return f"{mins}m {secs:02d}s"
     else:
         return f"{secs}s"
+
+
+def _compact_result_text(text: str | None, *, max_lines: int = 10, max_chars: int = 700) -> str:
+    if not text:
+        return ""
+    normalized = text.strip()
+    if not normalized:
+        return ""
+    lines = normalized.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    compact = "\n".join(lines)
+    if len(compact) > max_chars:
+        compact = compact[-max_chars:]
+        compact = f"...(截断)\n{compact}"
+    return compact
 
 
 def _build_ssl_context() -> ssl.SSLContext:

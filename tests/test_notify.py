@@ -366,6 +366,27 @@ class TestBuildTaskFailureMessage:
         assert "timeout" in msg
         assert "40m 00s" in msg
 
+    def test_rich_details(self):
+        msg = build_task_failure_message(
+            project="P",
+            task_set="ts",
+            task_no="M18",
+            task_name="物料建模",
+            failure_reason="exit code 1",
+            elapsed="3m 20s",
+            tool="copilot",
+            model="claude-opus-4.6",
+            return_code=1,
+            output_tail="Traceback...",
+            log_file="runtime/20260228/logs/M18.log",
+        )
+        assert "❌" in msg
+        assert "copilot" in msg
+        assert "claude-opus-4.6" in msg
+        assert "退出码" in msg
+        assert "最终结果输出" in msg
+        assert "M18.log" in msg
+
 
 class TestBuildInterruptMessage:
     def test_basic(self):
@@ -394,6 +415,34 @@ class TestBuildTaskCompleteMessage:
         assert "任务完成" in msg
         assert "M10" in msg
         assert "4m 18s" in msg
+
+    def test_rich_details_and_next_task_preview(self):
+        msg = build_task_complete_message(
+            project="P",
+            task_set="ts",
+            task_no="M10",
+            task_name="会计要素建模",
+            elapsed="4m 18s",
+            tool="copilot",
+            model="claude-opus-4.6",
+            return_code=0,
+            progress_done=3,
+            progress_total=10,
+            output_tail="All checks passed",
+            log_file="runtime/20260228/logs/M10.log",
+            next_task_no="M11",
+            next_task_name="科目映射重构",
+            next_tool="agent",
+            next_model="opus-4.6",
+        )
+        assert "✅" in msg
+        assert "copilot" in msg
+        assert "claude-opus-4.6" in msg
+        assert "3/10" in msg
+        assert "最终结果输出" in msg
+        assert "下一任务预告" in msg
+        assert "M11" in msg
+        assert "opus-4.6" in msg
 
 
 # ─── Integration test with real webhook ──────────────────────────

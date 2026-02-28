@@ -1136,6 +1136,11 @@ class TaskExecutor:
                         task_name=task.task_name,
                         failure_reason=f"超时 ({self.max_execution_seconds // 60}min)",
                         elapsed=_fmt_elapsed_short(elapsed),
+                        tool=task_tool_config.name,
+                        model=task_model,
+                        return_code=return_code,
+                        output_tail=output_tail,
+                        log_file=rel_log,
                     ),
                 )
 
@@ -1177,6 +1182,7 @@ class TaskExecutor:
                 show_task_result(task_no, success, elapsed, rel_clean, output_tail)
             else:
                 show_task_result(task_no, success, elapsed, rel_log, output_tail)
+            notify_log_file = rel_clean if clean_log else rel_log
 
             # Record to tracker
             if self._tracker:
@@ -1198,9 +1204,25 @@ class TaskExecutor:
                         task_name=task.task_name,
                         failure_reason=failure_reason,
                         elapsed=_fmt_elapsed_short(elapsed),
+                        tool=task_tool_config.name,
+                        model=task_model,
+                        return_code=return_code,
+                        output_tail=output_tail,
+                        log_file=notify_log_file,
                     ),
                 )
             elif success and self.notify_each:
+                next_task = next((t for t in tasks[idx + 1 :] if t.status != "completed"), None)
+                next_tool_name: str | None = None
+                next_model_name: str | None = None
+                if next_task:
+                    next_tool_name = self.tool_config.name
+                    next_model_name = self.model
+                    if next_task.cli.tool and not self.cli_tool_override:
+                        next_tool_name = next_task.cli.tool
+                    if next_task.cli.model and not self.cli_model_override:
+                        next_model_name = next_task.cli.model
+
                 send_notification_safe(
                     notifier,
                     build_task_complete_message(
@@ -1209,6 +1231,17 @@ class TaskExecutor:
                         task_no=task_no,
                         task_name=task.task_name,
                         elapsed=_fmt_elapsed_short(elapsed),
+                        tool=task_tool_config.name,
+                        model=task_model,
+                        return_code=return_code,
+                        progress_done=succeeded + failed,
+                        progress_total=total,
+                        output_tail=output_tail,
+                        log_file=notify_log_file,
+                        next_task_no=next_task.task_no if next_task else None,
+                        next_task_name=next_task.task_name if next_task else None,
+                        next_tool=next_tool_name,
+                        next_model=next_model_name,
                     ),
                 )
 
