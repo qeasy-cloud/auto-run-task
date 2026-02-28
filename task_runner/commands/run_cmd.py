@@ -182,6 +182,17 @@ def _execute(args, dry_run: bool = False) -> int:
 
     delay_range = parse_delay_range(getattr(args, "delay", None))
 
+    # Resolve per-task timeout
+    from ..config import MAX_EXECUTION_SECONDS
+
+    cli_timeout = getattr(args, "timeout", None)
+    max_execution_seconds = cli_timeout if cli_timeout is not None else MAX_EXECUTION_SECONDS
+
+    # ── Notification settings ──
+    notify_enabled = getattr(args, "notify_enabled", None)
+    notify_each = getattr(args, "notify_each", False)
+    wecom_webhook = getattr(args, "wecom_webhook", None)
+
     executor = TaskExecutor(
         project_config=config,
         task_set=task_set,
@@ -201,6 +212,10 @@ def _execute(args, dry_run: bool = False) -> int:
         verbose=verbose,
         quiet=quiet,
         delay_range=delay_range,
+        max_execution_seconds=max_execution_seconds,
+        notify_enabled=notify_enabled,
+        notify_each=notify_each,
+        wecom_webhook=wecom_webhook,
     )
 
     result_code = executor.run()

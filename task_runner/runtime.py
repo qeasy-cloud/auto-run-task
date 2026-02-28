@@ -94,9 +94,11 @@ def save_run_metadata(ctx: RunContext):
         "tasks_to_execute": ctx.tasks_to_execute,
     }
     run_json = ctx.run_dir / "run.json"
-    with open(run_json, "w", encoding="utf-8") as f:
+    tmp_path = run_json.with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
+    tmp_path.replace(run_json)
 
 
 def save_run_summary(ctx: RunContext, results: dict, task_results: list[dict]):
@@ -115,9 +117,11 @@ def save_run_summary(ctx: RunContext, results: dict, task_results: list[dict]):
     }
 
     summary_json = ctx.run_dir / "summary.json"
-    with open(summary_json, "w", encoding="utf-8") as f:
+    tmp_path = summary_json.with_suffix(".json.tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
         f.write("\n")
+    tmp_path.replace(summary_json)
 
 
 def save_live_status(

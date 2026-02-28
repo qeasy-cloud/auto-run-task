@@ -217,9 +217,46 @@ def _add_execution_options(parser):
         "Use '0' to disable, or a single number for fixed delay.",
     )
     ctrl_group.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="SEC",
+        help="Max execution time per task in seconds (default: 2400 = 40min). "
+        "The task is killed and marked failed if it exceeds this limit.",
+    )
+    ctrl_group.add_argument(
         "--git-safety",
         action="store_true",
         help="Check workspace git status and create safety tag before execution",
+    )
+
+    # Notification
+    notify_group = parser.add_argument_group("notification")
+    notify_toggle = notify_group.add_mutually_exclusive_group()
+    notify_toggle.add_argument(
+        "--notify",
+        dest="notify_enabled",
+        action="store_true",
+        default=None,
+        help="Enable webhook notifications (default: auto-detect from env/config)",
+    )
+    notify_toggle.add_argument(
+        "--no-notify",
+        dest="notify_enabled",
+        action="store_false",
+        help="Disable all webhook notifications",
+    )
+    notify_group.add_argument(
+        "--notify-each",
+        action="store_true",
+        default=False,
+        help="Send a notification for every completed task (not just failures/summary)",
+    )
+    notify_group.add_argument(
+        "--wecom-webhook",
+        default=None,
+        metavar="URL",
+        help="WeCom bot webhook URL (overrides TASK_RUNNER_WECOM_WEBHOOK env var)",
     )
 
     # Output control

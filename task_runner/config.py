@@ -94,6 +94,14 @@ TOOL_CONFIGS: dict[str, ToolConfig] = {
 }
 
 
+# ─── Execution Limits ────────────────────────────────────────────
+
+# Maximum time (in seconds) a single task is allowed to run before being
+# killed and marked as failed.  40 minutes by default; override via
+# ``--timeout`` CLI flag or project-level configuration.
+MAX_EXECUTION_SECONDS: int = 2400
+
+
 # ─── Proxy Environment Variables ─────────────────────────────────
 
 PROXY_ENV_KEYS = [

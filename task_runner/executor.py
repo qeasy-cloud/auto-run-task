@@ -11,10 +11,12 @@ Handles:
   - Per-task tool/model configuration
 """
 
+import argparse
 import atexit
 import contextlib
 import errno
 import json
+import logging
 import os
 import random
 import re
@@ -28,7 +30,46 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .config import PROXY_ENV_KEYS, ToolConfig, get_tool_config
+from .config import MAX_EXECUTION_SECONDS, PROXY_ENV_KEYS, ToolConfig, get_tool_config
+from .display import (
+    SPINNER_FRAMES,
+    ExecutionTracker,
+    console,
+    reset_terminal_title,
+    set_terminal_title,
+    show_all_done,
+    show_available_models,
+    show_banner,
+    show_dry_run_skip,
+    show_error,
+    show_force_exit,
+    show_heartbeat,
+    show_info,
+    show_interrupt,
+    show_progress_bar,
+    show_summary,
+    show_task_cmd,
+    show_task_list,
+    show_task_prompt_info,
+    show_task_result,
+    show_task_running,
+    show_task_skip,
+    show_task_start,
+    show_tool_not_found,
+    show_warning,
+)
+from .notify import (
+    build_batch_complete_message,
+    build_interrupt_message,
+    build_task_complete_message,
+    build_task_failure_message,
+    create_notifier,
+    send_notification_safe,
+)
+from .renderer import render_prompt
+from .state import find_start_index, get_task_stats, load_plan, save_plan
+
+logger = logging.getLogger(__name__)
 
 # Any AI CLI execution completing in under this threshold is treated as a
 # failure (the tool almost certainly did not actually process the task).
@@ -61,7 +102,7 @@ def parse_delay_range(value: str | None) -> tuple[int, int]:
         except ValueError:
             raise argparse.ArgumentTypeError(
                 f"Invalid delay range '{value}'. Use '60-120', '30', or '0'."
-            )
+            ) from None
         if lo < 0 or hi < 0:
             raise argparse.ArgumentTypeError("Delay values must be non-negative.")
         return (min(lo, hi), max(lo, hi))
@@ -71,7 +112,7 @@ def parse_delay_range(value: str | None) -> tuple[int, int]:
     except ValueError:
         raise argparse.ArgumentTypeError(
             f"Invalid delay value '{value}'. Use '60-120', '30', or '0'."
-        )
+        ) from None
     if n < 0:
         raise argparse.ArgumentTypeError("Delay value must be non-negative.")
     return (n, n)
@@ -166,41 +207,22 @@ def _extract_output_tail(clean_text: str, max_lines: int = 30) -> str:
 
     This gives users a quick view of what the AI CLI actually produced.
     """
-    lines = [l for l in clean_text.splitlines() if l.strip()]
+    lines = [line for line in clean_text.splitlines() if line.strip()]
     tail = lines[-max_lines:] if len(lines) > max_lines else lines
     return "\n".join(tail)
 
 
-from .display import (
-    SPINNER_FRAMES,
-    ExecutionTracker,
-    console,
-    reset_terminal_title,
-    set_terminal_title,
-    show_all_done,
-    show_available_models,
-    show_banner,
-    show_delay,
-    show_dry_run_skip,
-    show_error,
-    show_force_exit,
-    show_heartbeat,
-    show_info,
-    show_interrupt,
-    show_progress_bar,
-    show_summary,
-    show_task_cmd,
-    show_task_list,
-    show_task_prompt_info,
-    show_task_result,
-    show_task_running,
-    show_task_skip,
-    show_task_start,
-    show_tool_not_found,
-    show_warning,
-)
-from .renderer import render_prompt
-from .state import find_start_index, get_task_stats, load_plan, save_plan
+def _fmt_elapsed_short(elapsed: float) -> str:
+    """Format elapsed seconds into a compact human-readable string."""
+    total_secs = int(elapsed)
+    hours, remainder = divmod(total_secs, 3600)
+    mins, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {mins:02d}m {secs:02d}s"
+    elif mins > 0:
+        return f"{mins}m {secs:02d}s"
+    else:
+        return f"{secs}s"
 
 
 class TaskExecutor:
@@ -230,6 +252,7 @@ class TaskExecutor:
         # Runtime state (shared)
         self.current_process: subprocess.Popen | None = None
         self.interrupted: bool = False
+        self._timed_out: bool = False
         self._ctrl_c_count: int = 0
         self._task_needs_proxy: bool | None = None  # Per-task proxy override
 
@@ -272,6 +295,10 @@ class TaskExecutor:
         self.verbose: bool = kwargs.get("verbose", False)
         self.quiet: bool = kwargs.get("quiet", False)
         self.delay_range: tuple[int, int] = kwargs.get("delay_range", (60, 120))
+        self.max_execution_seconds: int = kwargs.get("max_execution_seconds", MAX_EXECUTION_SECONDS)
+        self.notify_enabled: bool | None = kwargs.get("notify_enabled")
+        self.notify_each: bool = kwargs.get("notify_each", False)
+        self.wecom_webhook: str | None = kwargs.get("wecom_webhook")
 
         self.work_dir = Path(self.workspace) if self.workspace else None
 
@@ -290,6 +317,9 @@ class TaskExecutor:
 
         self.work_dir: Path | None = args.work_dir_path  # type: ignore[no-redef]
         self.delay_range: tuple[int, int] = getattr(args, "delay_range", (60, 120))  # type: ignore[no-redef]
+        self.max_execution_seconds: int = getattr(  # type: ignore[no-redef]
+            args, "max_execution_seconds", MAX_EXECUTION_SECONDS
+        )
         self.project_dir: Path | None = None
         self.tasks_dir: Path | None = None
         self.logs_dir: Path | None = None
@@ -394,6 +424,11 @@ class TaskExecutor:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, sig, frame):
+        # NOTE: Python signals are always delivered to the main thread, and
+        # the GIL guarantees that simple integer increments are atomic.
+        # We keep this handler minimal (no I/O beyond the show_* helpers
+        # which only write to sys.stderr) to stay within the constraints of
+        # signal-safety.
         self._ctrl_c_count += 1
         self.interrupted = True
 
@@ -434,6 +469,40 @@ class TaskExecutor:
             with contextlib.suppress(Exception):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 
+    def _timeout_kill(self) -> None:
+        """Kill the current child process due to timeout.
+
+        Sends SIGTERM first, waits up to 5 seconds, then escalates to SIGKILL.
+        """
+        proc = self.current_process
+        if not proc or proc.poll() is not None:
+            return
+
+        try:
+            pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError):
+            return
+
+        show_warning(
+            f"Task exceeded timeout ({self.max_execution_seconds}s / "
+            f"{self.max_execution_seconds // 60}min) — sending SIGTERM …"
+        )
+
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            return
+
+        # Wait up to 5 seconds for graceful exit
+        for _ in range(50):
+            if proc.poll() is not None:
+                return
+            time.sleep(0.1)
+
+        show_warning("Process did not exit after SIGTERM, sending SIGKILL …")
+        with contextlib.suppress(ProcessLookupError, OSError):
+            os.killpg(pgid, signal.SIGKILL)
+
     def _make_env(self) -> dict:
         env = os.environ.copy()
 
@@ -441,9 +510,9 @@ class TaskExecutor:
         #   explicit --proxy/--no-proxy always wins,
         #   otherwise per-task tool's needs_proxy,
         #   fallback to global self.use_proxy.
-        if getattr(self, 'proxy_mode', None) == "on":
+        if getattr(self, "proxy_mode", None) == "on":
             needs_proxy = True
-        elif getattr(self, 'proxy_mode', None) == "off":
+        elif getattr(self, "proxy_mode", None) == "off":
             needs_proxy = False
         elif self._task_needs_proxy is not None:
             needs_proxy = self._task_needs_proxy
@@ -495,7 +564,7 @@ class TaskExecutor:
         has_more = False
         if isinstance(remaining_tasks, list) and len(remaining_tasks) > 0:
             has_more = True
-        elif hasattr(remaining_tasks, '__len__'):
+        elif hasattr(remaining_tasks, "__len__"):
             has_more = current_idx + 1 < len(remaining_tasks)
         if not has_more:
             return
@@ -507,7 +576,7 @@ class TaskExecutor:
         try:
             if isinstance(remaining_tasks, list) and len(remaining_tasks) > 0:
                 nxt = remaining_tasks[0]
-                next_label = nxt.task_no if hasattr(nxt, 'task_no') else nxt.get('task_no', '')
+                next_label = nxt.task_no if hasattr(nxt, "task_no") else nxt.get("task_no", "")
         except (IndexError, TypeError, AttributeError):
             pass
 
@@ -604,10 +673,17 @@ class TaskExecutor:
         os.close(slave_fd)
 
         start_time = time.time()
+        deadline = start_time + self.max_execution_seconds
 
         with open(log_path, "wb") as log_file:
             while True:
                 if self.interrupted:
+                    break
+
+                # ── Timeout check ──
+                if time.time() >= deadline:
+                    self._timed_out = True
+                    self._timeout_kill()
                     break
 
                 try:
@@ -663,12 +739,18 @@ class TaskExecutor:
         )
 
         start_time = time.time()
+        deadline = start_time + self.max_execution_seconds
 
         with open(log_path, "wb") as log_file:
             stdout = self.current_process.stdout
             assert stdout is not None
             for line in iter(stdout.readline, b""):
                 if self.interrupted:
+                    break
+                # ── Timeout check ──
+                if time.time() >= deadline:
+                    self._timed_out = True
+                    self._timeout_kill()
                     break
                 os.write(sys.stdout.fileno(), line)
                 log_file.write(line)
@@ -690,11 +772,20 @@ class TaskExecutor:
         return return_code, elapsed
 
     def execute_task(self, cmd: str, log_path: Path) -> tuple[int, float]:
+        self._timed_out = False
         try:
             return self._execute_with_pty(cmd, log_path)
         except Exception as e:
-            show_warning(f"PTY mode failed ({e}), falling back to PIPE mode")
+            logger.info("PTY mode failed (%s), falling back to PIPE mode", e)
+            show_warning(
+                f"PTY mode unavailable ({type(e).__name__}: {e}), "
+                f"falling back to PIPE mode. "
+                f"Output may lose colours / formatting."
+            )
             return self._execute_with_pipe(cmd, log_path)
+        finally:
+            # Issue #5b: unified subprocess cleanup — ensure no zombie remains
+            self._ensure_child_cleaned_up()
 
     @staticmethod
     def _drain_fd(fd: int, log_file):
@@ -711,6 +802,38 @@ class TaskExecutor:
                 log_file.flush()
             except OSError:
                 break
+
+    def _ensure_child_cleaned_up(self) -> None:
+        """Final safety net: make sure the child process is dead and reaped.
+
+        Called from the ``finally`` block of ``execute_task()`` to handle edge
+        cases such as PTY EOF arriving before the process exits, an exception
+        during PIPE reading, or any other unexpected early return.
+        """
+        proc = self.current_process
+        if proc is None:
+            return
+
+        if proc.poll() is None:
+            # Still running — send SIGTERM → wait 5s → SIGKILL
+            try:
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+            else:
+                for _ in range(50):
+                    if proc.poll() is not None:
+                        break
+                    time.sleep(0.1)
+                if proc.poll() is None:
+                    with contextlib.suppress(ProcessLookupError, OSError):
+                        os.killpg(pgid, signal.SIGKILL)
+            # Final reap
+            with contextlib.suppress(Exception):
+                proc.wait(timeout=5)
+
+        self.current_process = None
 
     # ─── Log Sanitization ────────────────────────────────────────
 
@@ -790,6 +913,15 @@ class TaskExecutor:
         from .task_set import save_task_set
 
         self._setup_signals()
+
+        # ── Initialize notifier ──
+        notify_enabled = self.notify_enabled
+        if notify_enabled is None:
+            notify_enabled = True  # default on when webhook is configured
+        notifier = create_notifier(
+            webhook_url=self.wecom_webhook,
+            enabled=notify_enabled if notify_enabled is not False else False,
+        )
 
         project_dir = get_project_dir(self.project_config.project)
         tasks = self.scheduled_tasks
@@ -940,7 +1072,80 @@ class TaskExecutor:
             if self.interrupted:
                 task.status = "interrupted"
                 save_task_set(self.task_set, project_dir)
+
+                # Send interrupt notification
+                completed_count = sum(1 for t in all_tasks if t.status == "completed")
+                send_notification_safe(
+                    notifier,
+                    build_interrupt_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        current_task_no=task_no,
+                        current_task_name=task.task_name,
+                        completed=completed_count,
+                        total=len(all_tasks),
+                    ),
+                )
                 break
+
+            # ── Timeout handling ──
+            if self._timed_out:
+                show_warning(
+                    f"Task {task_no} timed out after "
+                    f"{self.max_execution_seconds}s "
+                    f"({self.max_execution_seconds // 60}min) — marking as FAILED."
+                )
+                task.status = "failed"
+                task.elapsed_seconds = round(elapsed, 1)
+                task.last_run_at = datetime.now().isoformat()
+                save_task_set(self.task_set, project_dir)
+                failed += 1
+
+                # Sanitize log even for timed-out tasks
+                clean_log, clean_text = self._sanitize_log(log_path)
+                output_tail = _extract_output_tail(clean_text)
+                rel_log = str(log_path.relative_to(project_dir))
+                if clean_log:
+                    rel_log = str(clean_log.relative_to(project_dir))
+                show_task_result(task_no, False, elapsed, rel_log, output_tail)
+
+                if self._tracker:
+                    self._tracker.record_result(task_no, task.task_name, False, elapsed)
+
+                self._task_results.append(
+                    {
+                        "task_no": task_no,
+                        "status": "failed",
+                        "duration_seconds": round(elapsed, 1),
+                        "return_code": return_code,
+                        "failure_reason": "timeout",
+                        "log_file": f"logs/{task_no.replace('/', '_').replace(chr(92), '_')}.log",
+                    }
+                )
+                save_live_status(
+                    self.run_context, None, dict(self._results), list(self._task_results)
+                )
+
+                # Send failure notification
+                send_notification_safe(
+                    notifier,
+                    build_task_failure_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        task_no=task_no,
+                        task_name=task.task_name,
+                        failure_reason=f"超时 ({self.max_execution_seconds // 60}min)",
+                        elapsed=_fmt_elapsed_short(elapsed),
+                        tool=task_tool_config.name,
+                        model=task_model,
+                        return_code=return_code,
+                        output_tail=output_tail,
+                        log_file=rel_log,
+                    ),
+                )
+
+                # Continue to next task (don't delay — no point after a timeout)
+                continue
 
             # Record result
             success = return_code == 0
@@ -977,10 +1182,68 @@ class TaskExecutor:
                 show_task_result(task_no, success, elapsed, rel_clean, output_tail)
             else:
                 show_task_result(task_no, success, elapsed, rel_log, output_tail)
+            notify_log_file = rel_clean if clean_log else rel_log
 
             # Record to tracker
             if self._tracker:
                 self._tracker.record_result(task_no, task.task_name, success, elapsed)
+
+            # Send notification on failure or (opt-in) on each task
+            if not success:
+                failure_reason = (
+                    f"exit code {return_code}"
+                    if elapsed >= MIN_EXECUTION_SECONDS
+                    else f"执行过快 ({elapsed:.1f}s < {MIN_EXECUTION_SECONDS}s)"
+                )
+                send_notification_safe(
+                    notifier,
+                    build_task_failure_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        task_no=task_no,
+                        task_name=task.task_name,
+                        failure_reason=failure_reason,
+                        elapsed=_fmt_elapsed_short(elapsed),
+                        tool=task_tool_config.name,
+                        model=task_model,
+                        return_code=return_code,
+                        output_tail=output_tail,
+                        log_file=notify_log_file,
+                    ),
+                )
+            elif success and self.notify_each:
+                next_task = next((t for t in tasks[idx + 1 :] if t.status != "completed"), None)
+                next_tool_name: str | None = None
+                next_model_name: str | None = None
+                if next_task:
+                    next_tool_name = self.tool_config.name
+                    next_model_name = self.model
+                    if next_task.cli.tool and not self.cli_tool_override:
+                        next_tool_name = next_task.cli.tool
+                    if next_task.cli.model and not self.cli_model_override:
+                        next_model_name = next_task.cli.model
+
+                send_notification_safe(
+                    notifier,
+                    build_task_complete_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        task_no=task_no,
+                        task_name=task.task_name,
+                        elapsed=_fmt_elapsed_short(elapsed),
+                        tool=task_tool_config.name,
+                        model=task_model,
+                        return_code=return_code,
+                        progress_done=succeeded + failed,
+                        progress_total=total,
+                        output_tail=output_tail,
+                        log_file=notify_log_file,
+                        next_task_no=next_task.task_no if next_task else None,
+                        next_task_name=next_task.task_name if next_task else None,
+                        next_tool=next_tool_name,
+                        next_model=next_model_name,
+                    ),
+                )
 
             # Track result
             self._task_results.append(
@@ -997,7 +1260,7 @@ class TaskExecutor:
             save_live_status(self.run_context, None, dict(self._results), list(self._task_results))
 
             # Random delay between tasks (anti-rate-limit)
-            self._inter_task_delay(idx, tasks[idx + 1:], last_success=success)
+            self._inter_task_delay(idx, tasks[idx + 1 :], last_success=success)
 
         # Cleanup
         reset_terminal_title()
@@ -1022,6 +1285,29 @@ class TaskExecutor:
             interrupted=self.interrupted,
             task_results=self._task_results,
         )
+
+        # ── Batch completion notification ──
+        if notifier and (succeeded + failed) > 0:
+            run_start_str = datetime.fromtimestamp(run_start).strftime("%H:%M:%S")
+            run_end_str = datetime.now().strftime("%H:%M:%S")
+            failed_task_details = [r for r in self._task_results if r.get("status") == "failed"]
+            send_notification_safe(
+                notifier,
+                build_batch_complete_message(
+                    project=self.project_config.project,
+                    task_set=self.task_set.name,
+                    start_time=run_start_str,
+                    end_time=run_end_str,
+                    duration=_fmt_elapsed_short(total_elapsed),
+                    succeeded=succeeded,
+                    failed=failed,
+                    skipped=skipped,
+                    total=len(all_tasks),
+                    total_done=total_done,
+                    interrupted=self.interrupted,
+                    failed_tasks=failed_task_details,
+                ),
+            )
 
         return 0 if failed == 0 and not self.interrupted else 1
 
@@ -1156,6 +1442,29 @@ class TaskExecutor:
                 save_plan(self.plan_path, plan)
                 break
 
+            # ── Timeout handling (legacy) ──
+            if self._timed_out:
+                show_warning(
+                    f"Task {task_no} timed out after "
+                    f"{self.max_execution_seconds}s "
+                    f"({self.max_execution_seconds // 60}min) — marking as FAILED."
+                )
+                task["status"] = "failed"
+                failed += 1
+                save_plan(self.plan_path, plan)
+
+                clean_log, clean_text = self._sanitize_log(log_path)
+                output_tail = _extract_output_tail(clean_text)
+                if clean_log:
+                    rel_log = str(clean_log.relative_to(self.plan_path.parent))
+                else:
+                    rel_log = str(log_path.relative_to(self.plan_path.parent))
+                show_task_result(task_no, False, elapsed, rel_log, output_tail)
+
+                current_done = sum(1 for t in tasks if t.get("status") == "completed")
+                show_progress_bar(current_done, total)
+                continue
+
             success = return_code == 0
 
             # Guard: AI CLI finishing in < MIN_EXECUTION_SECONDS is bogus
@@ -1190,7 +1499,7 @@ class TaskExecutor:
             show_progress_bar(current_done, total)
 
             # Random delay between tasks (anti-rate-limit)
-            remaining_tasks = [t for t in tasks[idx + 1:] if t.get("status") != "completed"]
+            remaining_tasks = [t for t in tasks[idx + 1 :] if t.get("status") != "completed"]
             self._inter_task_delay(idx, remaining_tasks, last_success=success)
 
         reset_terminal_title()
