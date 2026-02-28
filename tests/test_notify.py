@@ -93,14 +93,16 @@ class TestWeComNotifier:
         n = WeComNotifier(FAKE_WEBHOOK)
         assert n.name() == "WeCom"
 
-    @patch("task_runner.notify.urllib.request.urlopen")
-    def test_send_markdown_success(self, mock_urlopen):
-        mock_urlopen.return_value = _make_urlopen_response({"errcode": 0, "errmsg": "ok"})
+    @patch("task_runner.notify.urllib.request.build_opener")
+    def test_send_markdown_success(self, mock_build_opener):
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = _make_urlopen_response({"errcode": 0, "errmsg": "ok"})
+        mock_build_opener.return_value = mock_opener
         n = WeComNotifier(FAKE_WEBHOOK)
         assert n.send_markdown("## test") is True
 
         # Verify the request was built correctly
-        call_args = mock_urlopen.call_args
+        call_args = mock_opener.open.call_args
         req = call_args[0][0]
         assert req.get_method() == "POST"
         assert req.get_header("Content-type") == "application/json"
@@ -109,42 +111,75 @@ class TestWeComNotifier:
         assert payload["msgtype"] == "markdown_v2"
         assert payload["markdown_v2"]["content"] == "## test"
 
-    @patch("task_runner.notify.urllib.request.urlopen")
-    def test_send_markdown_api_error(self, mock_urlopen):
-        mock_urlopen.return_value = _make_urlopen_response(
+    @patch("task_runner.notify.urllib.request.build_opener")
+    def test_send_markdown_api_error(self, mock_build_opener):
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = _make_urlopen_response(
             {"errcode": 93000, "errmsg": "invalid webhook url"}
         )
+        mock_build_opener.return_value = mock_opener
         n = WeComNotifier(FAKE_WEBHOOK)
         assert n.send_markdown("test") is False
 
-    @patch("task_runner.notify.urllib.request.urlopen")
-    def test_send_markdown_network_error(self, mock_urlopen):
-        mock_urlopen.side_effect = urllib.error.URLError("timeout")
+    @patch("task_runner.notify.urllib.request.build_opener")
+    def test_send_markdown_network_error(self, mock_build_opener):
+        mock_opener = MagicMock()
+        mock_opener.open.side_effect = urllib.error.URLError("timeout")
+        mock_build_opener.return_value = mock_opener
         n = WeComNotifier(FAKE_WEBHOOK)
         assert n.send_markdown("test") is False
 
-    @patch("task_runner.notify.urllib.request.urlopen")
-    def test_send_markdown_truncates_long_content(self, mock_urlopen):
-        mock_urlopen.return_value = _make_urlopen_response({"errcode": 0, "errmsg": "ok"})
+    @patch("task_runner.notify.urllib.request.build_opener")
+    def test_send_markdown_truncates_long_content(self, mock_build_opener):
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = _make_urlopen_response({"errcode": 0, "errmsg": "ok"})
+        mock_build_opener.return_value = mock_opener
         n = WeComNotifier(FAKE_WEBHOOK)
         long_content = "x" * 10000
         n.send_markdown(long_content)
 
-        call_args = mock_urlopen.call_args
+        call_args = mock_opener.open.call_args
         req = call_args[0][0]
         payload = json.loads(req.data.decode("utf-8"))
         content = payload["markdown_v2"]["content"]
         assert len(content.encode("utf-8")) <= WECOM_MAX_CONTENT_BYTES
 
-    @patch("task_runner.notify.urllib.request.urlopen")
-    def test_send_markdown_json_decode_error(self, mock_urlopen):
+    @patch("task_runner.notify.urllib.request.build_opener")
+    def test_send_markdown_json_decode_error(self, mock_build_opener):
         resp = MagicMock()
         resp.read.return_value = b"not json"
         resp.__enter__ = MagicMock(return_value=resp)
         resp.__exit__ = MagicMock(return_value=False)
-        mock_urlopen.return_value = resp
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = resp
+        mock_build_opener.return_value = mock_opener
         n = WeComNotifier(FAKE_WEBHOOK)
         assert n.send_markdown("test") is False
+
+    @patch("task_runner.notify.urllib.request.HTTPSHandler")
+    @patch("task_runner.notify.urllib.request.build_opener")
+    @patch("task_runner.notify.urllib.request.ProxyHandler")
+    def test_send_markdown_always_no_proxy(
+        self,
+        mock_proxy_handler,
+        mock_build_opener,
+        mock_https_handler,
+    ):
+        proxy_handler_obj = object()
+        mock_proxy_handler.return_value = proxy_handler_obj
+        https_handler_obj = object()
+        mock_https_handler.return_value = https_handler_obj
+
+        mock_opener = MagicMock()
+        mock_opener.open.return_value = _make_urlopen_response({"errcode": 0, "errmsg": "ok"})
+        mock_build_opener.return_value = mock_opener
+
+        n = WeComNotifier(FAKE_WEBHOOK)
+        assert n.send_markdown("test") is True
+
+        mock_proxy_handler.assert_called_once_with({})
+        mock_https_handler.assert_called_once()
+        mock_build_opener.assert_called_once_with(proxy_handler_obj, https_handler_obj)
 
 
 # ─── create_notifier ─────────────────────────────────────────────

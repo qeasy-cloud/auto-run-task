@@ -23,12 +23,18 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+try:
+    import certifi
+except Exception:  # pragma: no cover - optional dependency
+    certifi = None  # type: ignore[assignment]
 
 # ─── Constants ────────────────────────────────────────────────────
 
@@ -103,7 +109,12 @@ class WeComNotifier(Notifier):
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=WECOM_SEND_TIMEOUT) as resp:
+            ssl_context = _build_ssl_context()
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
+                urllib.request.HTTPSHandler(context=ssl_context),
+            )
+            with opener.open(req, timeout=WECOM_SEND_TIMEOUT) as resp:
                 body = json.loads(resp.read())
                 if body.get("errcode") != 0:
                     logger.warning(
@@ -305,6 +316,18 @@ def _format_duration(seconds: float) -> str:
         return f"{mins}m {secs:02d}s"
     else:
         return f"{secs}s"
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """Build SSL context for webhook calls.
+
+    Preference order:
+      1) certifi CA bundle (if installed)
+      2) system default trust store
+    """
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
 
 
 def send_notification_safe(notifier: Notifier | None, content: str) -> None:
