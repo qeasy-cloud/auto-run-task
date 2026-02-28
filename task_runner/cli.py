@@ -230,6 +230,35 @@ def _add_execution_options(parser):
         help="Check workspace git status and create safety tag before execution",
     )
 
+    # Notification
+    notify_group = parser.add_argument_group("notification")
+    notify_toggle = notify_group.add_mutually_exclusive_group()
+    notify_toggle.add_argument(
+        "--notify",
+        dest="notify_enabled",
+        action="store_true",
+        default=None,
+        help="Enable webhook notifications (default: auto-detect from env/config)",
+    )
+    notify_toggle.add_argument(
+        "--no-notify",
+        dest="notify_enabled",
+        action="store_false",
+        help="Disable all webhook notifications",
+    )
+    notify_group.add_argument(
+        "--notify-each",
+        action="store_true",
+        default=False,
+        help="Send a notification for every completed task (not just failures/summary)",
+    )
+    notify_group.add_argument(
+        "--wecom-webhook",
+        default=None,
+        metavar="URL",
+        help="WeCom bot webhook URL (overrides TASK_RUNNER_WECOM_WEBHOOK env var)",
+    )
+
     # Output control
     output_group = parser.add_argument_group("output control")
     verbosity = output_group.add_mutually_exclusive_group()

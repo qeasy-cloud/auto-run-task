@@ -31,6 +31,43 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import MAX_EXECUTION_SECONDS, PROXY_ENV_KEYS, ToolConfig, get_tool_config
+from .display import (
+    SPINNER_FRAMES,
+    ExecutionTracker,
+    console,
+    reset_terminal_title,
+    set_terminal_title,
+    show_all_done,
+    show_available_models,
+    show_banner,
+    show_dry_run_skip,
+    show_error,
+    show_force_exit,
+    show_heartbeat,
+    show_info,
+    show_interrupt,
+    show_progress_bar,
+    show_summary,
+    show_task_cmd,
+    show_task_list,
+    show_task_prompt_info,
+    show_task_result,
+    show_task_running,
+    show_task_skip,
+    show_task_start,
+    show_tool_not_found,
+    show_warning,
+)
+from .notify import (
+    build_batch_complete_message,
+    build_interrupt_message,
+    build_task_complete_message,
+    build_task_failure_message,
+    create_notifier,
+    send_notification_safe,
+)
+from .renderer import render_prompt
+from .state import find_start_index, get_task_stats, load_plan, save_plan
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +102,7 @@ def parse_delay_range(value: str | None) -> tuple[int, int]:
         except ValueError:
             raise argparse.ArgumentTypeError(
                 f"Invalid delay range '{value}'. Use '60-120', '30', or '0'."
-            )
+            ) from None
         if lo < 0 or hi < 0:
             raise argparse.ArgumentTypeError("Delay values must be non-negative.")
         return (min(lo, hi), max(lo, hi))
@@ -75,7 +112,7 @@ def parse_delay_range(value: str | None) -> tuple[int, int]:
     except ValueError:
         raise argparse.ArgumentTypeError(
             f"Invalid delay value '{value}'. Use '60-120', '30', or '0'."
-        )
+        ) from None
     if n < 0:
         raise argparse.ArgumentTypeError("Delay value must be non-negative.")
     return (n, n)
@@ -170,41 +207,22 @@ def _extract_output_tail(clean_text: str, max_lines: int = 30) -> str:
 
     This gives users a quick view of what the AI CLI actually produced.
     """
-    lines = [l for l in clean_text.splitlines() if l.strip()]
+    lines = [line for line in clean_text.splitlines() if line.strip()]
     tail = lines[-max_lines:] if len(lines) > max_lines else lines
     return "\n".join(tail)
 
 
-from .display import (
-    SPINNER_FRAMES,
-    ExecutionTracker,
-    console,
-    reset_terminal_title,
-    set_terminal_title,
-    show_all_done,
-    show_available_models,
-    show_banner,
-    show_delay,
-    show_dry_run_skip,
-    show_error,
-    show_force_exit,
-    show_heartbeat,
-    show_info,
-    show_interrupt,
-    show_progress_bar,
-    show_summary,
-    show_task_cmd,
-    show_task_list,
-    show_task_prompt_info,
-    show_task_result,
-    show_task_running,
-    show_task_skip,
-    show_task_start,
-    show_tool_not_found,
-    show_warning,
-)
-from .renderer import render_prompt
-from .state import find_start_index, get_task_stats, load_plan, save_plan
+def _fmt_elapsed_short(elapsed: float) -> str:
+    """Format elapsed seconds into a compact human-readable string."""
+    total_secs = int(elapsed)
+    hours, remainder = divmod(total_secs, 3600)
+    mins, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}h {mins:02d}m {secs:02d}s"
+    elif mins > 0:
+        return f"{mins}m {secs:02d}s"
+    else:
+        return f"{secs}s"
 
 
 class TaskExecutor:
@@ -277,9 +295,10 @@ class TaskExecutor:
         self.verbose: bool = kwargs.get("verbose", False)
         self.quiet: bool = kwargs.get("quiet", False)
         self.delay_range: tuple[int, int] = kwargs.get("delay_range", (60, 120))
-        self.max_execution_seconds: int = kwargs.get(
-            "max_execution_seconds", MAX_EXECUTION_SECONDS
-        )
+        self.max_execution_seconds: int = kwargs.get("max_execution_seconds", MAX_EXECUTION_SECONDS)
+        self.notify_enabled: bool | None = kwargs.get("notify_enabled")
+        self.notify_each: bool = kwargs.get("notify_each", False)
+        self.wecom_webhook: str | None = kwargs.get("wecom_webhook")
 
         self.work_dir = Path(self.workspace) if self.workspace else None
 
@@ -491,9 +510,9 @@ class TaskExecutor:
         #   explicit --proxy/--no-proxy always wins,
         #   otherwise per-task tool's needs_proxy,
         #   fallback to global self.use_proxy.
-        if getattr(self, 'proxy_mode', None) == "on":
+        if getattr(self, "proxy_mode", None) == "on":
             needs_proxy = True
-        elif getattr(self, 'proxy_mode', None) == "off":
+        elif getattr(self, "proxy_mode", None) == "off":
             needs_proxy = False
         elif self._task_needs_proxy is not None:
             needs_proxy = self._task_needs_proxy
@@ -545,7 +564,7 @@ class TaskExecutor:
         has_more = False
         if isinstance(remaining_tasks, list) and len(remaining_tasks) > 0:
             has_more = True
-        elif hasattr(remaining_tasks, '__len__'):
+        elif hasattr(remaining_tasks, "__len__"):
             has_more = current_idx + 1 < len(remaining_tasks)
         if not has_more:
             return
@@ -557,7 +576,7 @@ class TaskExecutor:
         try:
             if isinstance(remaining_tasks, list) and len(remaining_tasks) > 0:
                 nxt = remaining_tasks[0]
-                next_label = nxt.task_no if hasattr(nxt, 'task_no') else nxt.get('task_no', '')
+                next_label = nxt.task_no if hasattr(nxt, "task_no") else nxt.get("task_no", "")
         except (IndexError, TypeError, AttributeError):
             pass
 
@@ -895,6 +914,15 @@ class TaskExecutor:
 
         self._setup_signals()
 
+        # ── Initialize notifier ──
+        notify_enabled = self.notify_enabled
+        if notify_enabled is None:
+            notify_enabled = True  # default on when webhook is configured
+        notifier = create_notifier(
+            webhook_url=self.wecom_webhook,
+            enabled=notify_enabled if notify_enabled is not False else False,
+        )
+
         project_dir = get_project_dir(self.project_config.project)
         tasks = self.scheduled_tasks
         total = len(tasks)
@@ -1044,6 +1072,20 @@ class TaskExecutor:
             if self.interrupted:
                 task.status = "interrupted"
                 save_task_set(self.task_set, project_dir)
+
+                # Send interrupt notification
+                completed_count = sum(1 for t in all_tasks if t.status == "completed")
+                send_notification_safe(
+                    notifier,
+                    build_interrupt_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        current_task_no=task_no,
+                        current_task_name=task.task_name,
+                        completed=completed_count,
+                        total=len(all_tasks),
+                    ),
+                )
                 break
 
             # ── Timeout handling ──
@@ -1082,6 +1124,19 @@ class TaskExecutor:
                 )
                 save_live_status(
                     self.run_context, None, dict(self._results), list(self._task_results)
+                )
+
+                # Send failure notification
+                send_notification_safe(
+                    notifier,
+                    build_task_failure_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        task_no=task_no,
+                        task_name=task.task_name,
+                        failure_reason=f"超时 ({self.max_execution_seconds // 60}min)",
+                        elapsed=_fmt_elapsed_short(elapsed),
+                    ),
                 )
 
                 # Continue to next task (don't delay — no point after a timeout)
@@ -1127,6 +1182,36 @@ class TaskExecutor:
             if self._tracker:
                 self._tracker.record_result(task_no, task.task_name, success, elapsed)
 
+            # Send notification on failure or (opt-in) on each task
+            if not success:
+                failure_reason = (
+                    f"exit code {return_code}"
+                    if elapsed >= MIN_EXECUTION_SECONDS
+                    else f"执行过快 ({elapsed:.1f}s < {MIN_EXECUTION_SECONDS}s)"
+                )
+                send_notification_safe(
+                    notifier,
+                    build_task_failure_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        task_no=task_no,
+                        task_name=task.task_name,
+                        failure_reason=failure_reason,
+                        elapsed=_fmt_elapsed_short(elapsed),
+                    ),
+                )
+            elif success and self.notify_each:
+                send_notification_safe(
+                    notifier,
+                    build_task_complete_message(
+                        project=self.project_config.project,
+                        task_set=self.task_set.name,
+                        task_no=task_no,
+                        task_name=task.task_name,
+                        elapsed=_fmt_elapsed_short(elapsed),
+                    ),
+                )
+
             # Track result
             self._task_results.append(
                 {
@@ -1142,7 +1227,7 @@ class TaskExecutor:
             save_live_status(self.run_context, None, dict(self._results), list(self._task_results))
 
             # Random delay between tasks (anti-rate-limit)
-            self._inter_task_delay(idx, tasks[idx + 1:], last_success=success)
+            self._inter_task_delay(idx, tasks[idx + 1 :], last_success=success)
 
         # Cleanup
         reset_terminal_title()
@@ -1167,6 +1252,29 @@ class TaskExecutor:
             interrupted=self.interrupted,
             task_results=self._task_results,
         )
+
+        # ── Batch completion notification ──
+        if notifier and (succeeded + failed) > 0:
+            run_start_str = datetime.fromtimestamp(run_start).strftime("%H:%M:%S")
+            run_end_str = datetime.now().strftime("%H:%M:%S")
+            failed_task_details = [r for r in self._task_results if r.get("status") == "failed"]
+            send_notification_safe(
+                notifier,
+                build_batch_complete_message(
+                    project=self.project_config.project,
+                    task_set=self.task_set.name,
+                    start_time=run_start_str,
+                    end_time=run_end_str,
+                    duration=_fmt_elapsed_short(total_elapsed),
+                    succeeded=succeeded,
+                    failed=failed,
+                    skipped=skipped,
+                    total=len(all_tasks),
+                    total_done=total_done,
+                    interrupted=self.interrupted,
+                    failed_tasks=failed_task_details,
+                ),
+            )
 
         return 0 if failed == 0 and not self.interrupted else 1
 
@@ -1358,7 +1466,7 @@ class TaskExecutor:
             show_progress_bar(current_done, total)
 
             # Random delay between tasks (anti-rate-limit)
-            remaining_tasks = [t for t in tasks[idx + 1:] if t.get("status") != "completed"]
+            remaining_tasks = [t for t in tasks[idx + 1 :] if t.get("status") != "completed"]
             self._inter_task_delay(idx, remaining_tasks, last_success=success)
 
         reset_terminal_title()
