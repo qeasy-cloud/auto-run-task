@@ -264,9 +264,7 @@ def build_task_failure_message(
     if compact_output:
         lines.append("")
         lines.append("### 最终结果输出")
-        lines.append("```text")
         lines.append(compact_output)
-        lines.append("```")
 
     lines.extend(suffix_lines)
     return "\n".join(lines)
@@ -354,9 +352,7 @@ def build_task_complete_message(
     if compact_output:
         lines.append("")
         lines.append("### 最终结果输出")
-        lines.append("```text")
         lines.append(compact_output)
-        lines.append("```")
 
     lines.extend(suffix_lines)
     return "\n".join(lines)
@@ -432,7 +428,7 @@ def _fit_output_by_budget(
     if not output_tail or not output_tail.strip():
         return ""
 
-    wrapper = ["", "### 最终结果输出", "```text", "", "```"]
+    wrapper = ["\n### 最终结果输出", ""]
     base_bytes = len("\n".join(prefix_lines + wrapper + suffix_lines).encode("utf-8"))
     available = target_bytes - base_bytes - 96
     if available <= 80:
