@@ -6,10 +6,21 @@ import time
 from datetime import datetime
 
 from rich import box
+from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
 
 from .core import SPINNER_FRAMES, _format_elapsed, console
+
+
+class _TrackerRenderable:
+    """Dynamic renderable wrapper so Rich Live re-renders on every refresh."""
+
+    def __init__(self, tracker: "ExecutionTracker"):
+        self._tracker = tracker
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield self._tracker._render()
 
 
 def show_heartbeat(task_no: str, elapsed: float, frame_idx: int = 0):
@@ -43,6 +54,7 @@ class ExecutionTracker:
         self._current_task_no: str = ""
         self._current_task_name: str = ""
         self._current_start: float = 0.0
+        self._current_start_str: str = ""
         self._running: bool = False
 
         # Result history (last N tasks)
@@ -57,7 +69,7 @@ class ExecutionTracker:
         if not self._enabled:
             return
         self._live = Live(
-            self._render(),
+            _TrackerRenderable(self),
             console=console,
             refresh_per_second=2,
             transient=True,
@@ -75,6 +87,7 @@ class ExecutionTracker:
         self._current_task_no = task_no
         self._current_task_name = task_name
         self._current_start = time.time()
+        self._current_start_str = datetime.now().strftime("%H:%M:%S")
         self._running = True
         self._refresh()
 
@@ -89,6 +102,7 @@ class ExecutionTracker:
                 "status": status,
                 "elapsed": elapsed,
                 "success": success,
+                "finished_at": datetime.now().strftime("%H:%M:%S"),
             }
         )
         if success:
@@ -145,7 +159,10 @@ class ExecutionTracker:
                 f"  [bold yellow]{spinner} Running[/bold yellow] │ "
                 f"[bold]{self._current_task_no}[/bold] — {self._current_task_name}"
             )
-            parts.append(f"  [bold yellow]  Elapsed[/bold yellow] │ [cyan]{time_str}[/cyan]")
+            parts.append(
+                f"  [bold yellow]  Elapsed[/bold yellow] │ [cyan]{time_str}[/cyan]"
+                f"  [dim](started {self._current_start_str})[/dim]"
+            )
 
         # ── Recent History (last 5) ──
         if self._task_history:
@@ -153,9 +170,11 @@ class ExecutionTracker:
             parts.append("  [dim]─── Recent ────────────────────────────────[/dim]")
             for entry in self._task_history[-5:]:
                 elapsed_str = _format_elapsed(entry["elapsed"])
+                finished_at = entry.get("finished_at", "")
                 parts.append(
                     f"  {entry['status']} [dim]{entry['task_no']}[/dim] "
                     f"{entry['task_name'][:40]}  [cyan]{elapsed_str}[/cyan]"
+                    f"  [dim][{finished_at}][/dim]"
                 )
 
         border = "yellow" if self._running else "green"

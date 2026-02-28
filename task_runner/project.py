@@ -85,8 +85,8 @@ class ProjectConfig:
     description: str = ""
     status: str = "planned"
     created_at: str = ""
-    default_tool: str = "copilot"
-    default_model: str = "claude-opus-4.6"
+    default_tool: str = "kimi"
+    default_model: str = ""
     tags: list[str] = field(default_factory=list)
     run_record: list[RunRecord] = field(default_factory=list)
 
@@ -115,8 +115,8 @@ class ProjectConfig:
             workspace=d.get("workspace", ""),
             status=d.get("status", "planned"),
             created_at=d.get("created_at", ""),
-            default_tool=d.get("default_tool", "copilot"),
-            default_model=d.get("default_model", "claude-opus-4.6"),
+            default_tool=d.get("default_tool", "kimi"),
+            default_model=d.get("default_model", ""),
             tags=d.get("tags", []),
             run_record=records,
             _project_dir=project_dir,
@@ -130,8 +130,8 @@ def create_project(
     name: str,
     workspace: str,
     description: str = "",
-    default_tool: str = "copilot",
-    default_model: str = "claude-opus-4.6",
+    default_tool: str = "kimi",
+    default_model: str = "",
     tags: list[str] | None = None,
 ) -> ProjectConfig:
     """
