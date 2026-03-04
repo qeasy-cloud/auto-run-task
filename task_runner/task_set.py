@@ -77,8 +77,11 @@ class Task:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Task":
+        # Backward compatibility: some task sets use `task_code` as the real
+        # identifier and keep `task_no` empty.
+        task_no = d.get("task_no") or d.get("task_code") or ""
         return cls(
-            task_no=d.get("task_no", ""),
+            task_no=task_no,
             task_name=d.get("task_name", ""),
             batch=d.get("batch", 1),
             description=d.get("description", ""),

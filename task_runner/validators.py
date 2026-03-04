@@ -149,9 +149,9 @@ def validate_task_set_file(data: dict, project_dir: Path) -> ValidationResult:
             result.add_error(f"Task [{i}] is not a JSON object")
             continue
 
-        task_no = task.get("task_no")
+        task_no = task.get("task_no") or task.get("task_code")
         if not task_no:
-            result.add_error(f"Task [{i}] missing 'task_no'")
+            result.add_error(f"Task [{i}] missing 'task_no' (or fallback 'task_code')")
         elif task_no in seen_nos:
             result.add_error(f"Duplicate task_no: '{task_no}'")
         else:

@@ -385,7 +385,6 @@ class TestBuildTaskFailureMessage:
         assert "claude-opus-4.6" in msg
         assert "退出码" in msg
         assert "最终结果输出" in msg
-        assert "M18.log" in msg
 
 
 class TestBuildInterruptMessage:

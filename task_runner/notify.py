@@ -221,9 +221,6 @@ def build_batch_complete_message(
         lines.append("")
         lines.append("> 执行被用户中断 (Ctrl+C)")
 
-    lines.append("")
-    lines.append("> 播报来源：轻易云自动机器人")
-
     return "\n".join(lines)
 
 
@@ -256,10 +253,7 @@ def build_task_failure_message(
         lines.append(f"**退出码:** {return_code}")
     lines.append(f"**失败原因:** {failure_reason}")
     lines.append(f"**耗时:** {elapsed}")
-    if log_file:
-        lines.append(f"**日志文件:** {log_file}")
-
-    suffix_lines = ["", "> 播报来源：轻易云自动机器人"]
+    suffix_lines = [""]
     compact_output = _fit_output_by_budget(lines, output_tail, suffix_lines)
     if compact_output:
         lines.append("")
@@ -289,8 +283,6 @@ def build_interrupt_message(
     lines.append(f"**中断时间:** {now_str}")
     lines.append(f"**当前任务:** {current_task_no} {current_task_name}")
     lines.append(f"**已完成:** {completed}/{total}")
-    lines.append("")
-    lines.append("> 播报来源：轻易云自动机器人")
     return "\n".join(lines)
 
 
@@ -330,13 +322,11 @@ def build_task_complete_message(
     if progress_done is not None and progress_total:
         pct = (progress_done / progress_total) * 100
         lines.append(f"**当前进度:** {progress_done}/{progress_total} ({pct:.1f}%)")
-    if log_file:
-        lines.append(f"**日志文件:** {log_file}")
-
     suffix_lines: list[str] = [""]
-    if next_task_no and next_task_name:
+    if next_task_no:
+        next_title = f"{next_task_no} {next_task_name}" if next_task_name else str(next_task_no)
         suffix_lines.append("### 下一任务预告")
-        suffix_lines.append(f"- {next_task_no} {next_task_name}")
+        suffix_lines.append(f"- {next_title}")
         if next_tool:
             suffix_lines.append(f"- 工具: {next_tool}")
         if next_model:
@@ -344,9 +334,6 @@ def build_task_complete_message(
     else:
         suffix_lines.append("### 下一任务预告")
         suffix_lines.append("- 当前任务集已无待执行任务")
-
-    suffix_lines.append("")
-    suffix_lines.append("> 播报来源：轻易云自动机器人")
 
     compact_output = _fit_output_by_budget(lines, output_tail, suffix_lines)
     if compact_output:
