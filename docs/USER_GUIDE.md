@@ -101,6 +101,12 @@ python run.py dry-run MY_PROJECT fix-bugs
 
 # 确认无误后执行
 python run.py run MY_PROJECT fix-bugs
+
+# 一次性顺序执行多个任务集
+python run.py run MY_PROJECT fix-bugs migration refactor
+
+# 执行项目内所有任务集
+python run.py run MY_PROJECT --all
 ```
 
 ---
@@ -131,6 +137,15 @@ python run.py project archive FIX_CODE
 ```bash
 # 基本执行（使用项目默认 tool/model）
 python run.py run FIX_CODE code-quality-fix
+
+# 一次性顺序执行多个任务集
+python run.py run FIX_CODE code-quality-fix migration refactor
+
+# 执行项目内所有任务集（按 task_set_order 或字母序）
+python run.py run FIX_CODE --all
+
+# 多任务集 + 遇错停止（默认遇错继续执行下一个任务集）
+python run.py run FIX_CODE --all --stop-on-error
 
 # 指定工具和模型
 python run.py run FIX_CODE code-quality-fix --tool agent --model opus-4.6
@@ -315,6 +330,31 @@ python run.py run MY_PROJECT my-tasks
 # → 自动从上次中断的位置继续
 ```
 
+### 场景 6：多任务集顺序执行
+
+当项目中有多个任务集需要按顺序执行（如先修复、再迁移、最后重构）：
+
+```bash
+# 方式 1：显式指定执行顺序
+python run.py run MY_PROJECT fix-bugs migration refactor
+
+# 方式 2：使用 --all 执行所有任务集
+python run.py run MY_PROJECT --all
+
+# 方式 3：在 __init__.json 中配置 task_set_order 后使用 --all
+# __init__.json 中添加："task_set_order": ["fix-bugs", "migration", "refactor"]
+python run.py run MY_PROJECT --all
+
+# 遇到错误立即停止（默认会继续执行下一个任务集）
+python run.py run MY_PROJECT --all --stop-on-error
+
+# 先预览所有任务集
+python run.py dry-run MY_PROJECT --all
+```
+
+> 💡 **提示：** 多任务集执行时，每个任务集之间会显示进度分隔线和汇总面板。
+> 按 Ctrl+C 中断后，当前任务集的已完成任务状态会被保存，后续任务集不会执行。
+
 ### 场景 5：进程守护 / 后台长时间运行
 
 当需要在 supervisor、systemd 或 nohup 下运行时，使用 `--daemon` 模式：
@@ -323,9 +363,12 @@ python run.py run MY_PROJECT my-tasks
 # 显式指定 daemon 模式
 python run.py run MY_PROJECT my-tasks --delay 111-229 --daemon
 
+# 多任务集 + daemon 模式
+python run.py run MY_PROJECT --all --delay 111-229 --daemon
+
 # 自动检测：当 stdout 不是 TTY 时自动启用 daemon 模式
 # 所以在 supervisor / systemd / nohup 下不加 --daemon 也能正常工作
-nohup python run.py run MY_PROJECT my-tasks --delay 111-229 > task.log 2>&1 &
+nohup python run.py run MY_PROJECT --all --delay 111-229 > task.log 2>&1 &
 ```
 
 **Supervisor / systemd 配置关键说明：**
@@ -353,7 +396,7 @@ which python     # 确保是 venv 内的 python，例如 /path/to/auto-run-task/
 
 ```ini
 [program:auto-task-runner]
-command=/path/to/auto-run-task/.task_env/bin/python /path/to/auto-run-task/run.py run MY_PROJECT my-tasks --delay 111-229
+command=/path/to/auto-run-task/.task_env/bin/python /path/to/auto-run-task/run.py run MY_PROJECT --all --delay 111-229
 directory=/path/to/auto-run-task
 autostart=true
 autorestart=false
@@ -376,7 +419,7 @@ After=network.target
 Type=simple
 User=deploy
 WorkingDirectory=/path/to/auto-run-task
-ExecStart=/path/to/auto-run-task/.task_env/bin/python run.py run MY_PROJECT my-tasks --delay 111-229
+ExecStart=/path/to/auto-run-task/.task_env/bin/python run.py run MY_PROJECT --all --delay 111-229
 Restart=no
 StandardOutput=journal
 StandardError=journal
@@ -427,6 +470,7 @@ WantedBy=multi-user.target
   "default_tool": "kimi",
   "default_model": "",
   "tags": ["code-quality"],
+  "task_set_order": ["code-quality-fix", "migration", "refactor"],
   "run_record": [
     {
       "run_at": "2024-06-01_10-00-00",
@@ -440,6 +484,11 @@ WantedBy=multi-user.target
     }
   ]
 }
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `task_set_order` | 可选。定义 `--all` 时的任务集执行顺序。未列出的任务集会按字母序追加到末尾。不配置则默认按字母序执行所有任务集。 |
 ```
 
 ### `.tasks.json` — 任务集

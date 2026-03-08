@@ -104,11 +104,40 @@ def _add_run_subparser(subparsers):
     """Add the 'run' subcommand."""
     run_parser = subparsers.add_parser(
         "run",
-        help="Execute tasks from a project's task set",
+        help="Execute tasks from a project's task set(s)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""examples:
+  # Run a single task set
+  %(prog)s MY_PROJECT fix-bugs
+
+  # Run multiple task sets sequentially
+  %(prog)s MY_PROJECT setup migration cleanup
+
+  # Run all task sets in the project
+  %(prog)s MY_PROJECT --all
+
+  # Run all task sets with project-defined order (task_set_order in __init__.json)
+  %(prog)s MY_PROJECT --all
+""",
     )
     run_parser.add_argument("project_name", help="Project name")
-    run_parser.add_argument("task_set_name", help="Task set name (without .tasks.json)")
+    run_parser.add_argument(
+        "task_set_names",
+        nargs="*",
+        metavar="TASK_SET",
+        help="Task set name(s) (without .tasks.json). Specify one or more, or use --all.",
+    )
+    run_parser.add_argument(
+        "--all",
+        dest="run_all",
+        action="store_true",
+        help="Run all task sets in the project (order: task_set_order in __init__.json, then alphabetical)",
+    )
+    run_parser.add_argument(
+        "--stop-on-error",
+        action="store_true",
+        help="Stop execution if any task set fails (default: continue to next task set)",
+    )
 
     _add_execution_options(run_parser)
 
@@ -121,7 +150,18 @@ def _add_dryrun_subparser(subparsers):
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     dryrun_parser.add_argument("project_name", help="Project name")
-    dryrun_parser.add_argument("task_set_name", help="Task set name (without .tasks.json)")
+    dryrun_parser.add_argument(
+        "task_set_names",
+        nargs="*",
+        metavar="TASK_SET",
+        help="Task set name(s) (without .tasks.json). Specify one or more, or use --all.",
+    )
+    dryrun_parser.add_argument(
+        "--all",
+        dest="run_all",
+        action="store_true",
+        help="Dry-run all task sets in the project",
+    )
 
     _add_execution_options(dryrun_parser)
 
