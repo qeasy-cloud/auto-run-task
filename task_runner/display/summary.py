@@ -9,6 +9,102 @@ from rich.table import Table
 from .core import STATUS_ICONS, _format_elapsed, console
 
 
+def show_multi_task_set_header(task_set_names: list[str], project: str):
+    """Display header for multi-task-set sequential execution."""
+    names_str = ", ".join(f"[magenta]{n}[/magenta]" for n in task_set_names)
+    panel = Panel(
+        f"[bold]Project:[/bold] [cyan]{project}[/cyan]\n"
+        f"[bold]Task Sets ({len(task_set_names)}):[/bold] {names_str}\n"
+        f"[bold]Mode:[/bold] Sequential execution",
+        title="[bold] 📋 Multi Task Set Execution [/bold]",
+        border_style="bright_blue",
+        box=box.DOUBLE_EDGE,
+        padding=(1, 2),
+    )
+    console.print(panel)
+    console.print()
+
+
+def show_task_set_divider(current: int, total: int, name: str):
+    """Display a separator between task sets in multi-mode."""
+    console.print()
+    console.rule(
+        f"[bold cyan]📦 Task Set [{current}/{total}]: {name}[/bold cyan]",
+        style="bright_blue",
+    )
+    console.print()
+
+
+def show_multi_task_set_summary(
+    results: list[dict],
+    total_elapsed: float,
+    interrupted: bool = False,
+):
+    """Display combined summary for multi-task-set execution."""
+    all_succeeded = all(r["code"] == 0 for r in results)
+
+    if interrupted:
+        title = "⚠️  [bold yellow]Multi Task Set Execution Interrupted[/bold yellow]"
+        border = "yellow"
+    elif all_succeeded:
+        title = "🎉 [bold green]All Task Sets Completed Successfully![/bold green]"
+        border = "green"
+    else:
+        title = "📊 [bold]Multi Task Set Execution Summary[/bold]"
+        border = "red"
+
+    # Per task set table
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        header_style="bold",
+        padding=(0, 1),
+    )
+    table.add_column("#", width=4, justify="center")
+    table.add_column("Task Set", style="bold", min_width=15)
+    table.add_column("Status", width=10, justify="center")
+    table.add_column("Duration", width=12, justify="right", style="cyan")
+
+    sets_ok = 0
+    sets_fail = 0
+    for i, r in enumerate(results, 1):
+        ok = r["code"] == 0
+        icon = "✅" if ok else "❌"
+        if ok:
+            sets_ok += 1
+        else:
+            sets_fail += 1
+        table.add_row(
+            str(i),
+            r["task_set_name"],
+            icon,
+            _format_elapsed(r["elapsed"]),
+        )
+
+    console.print()
+    console.rule("[bold]Multi Task Set Summary[/bold]", style="bright_blue")
+    console.print()
+    console.print(table)
+
+    # Overall stats
+    lines = [
+        f"[green]✅ Succeeded[/green]   │ {sets_ok} task set(s)",
+        f"[red]❌ Failed[/red]      │ {sets_fail} task set(s)",
+        f"[cyan]⏱  Duration[/cyan]   │ {_format_elapsed(total_elapsed)}",
+    ]
+
+    panel = Panel(
+        "\n".join(lines),
+        title=title,
+        border_style=border,
+        box=box.DOUBLE_EDGE,
+        padding=(1, 2),
+    )
+    console.print()
+    console.print(panel)
+    console.print()
+
+
 def show_summary(
     succeeded: int,
     failed: int,

@@ -101,6 +101,12 @@ python run.py dry-run MY_PROJECT fix-bugs
 
 # 确认无误后执行
 python run.py run MY_PROJECT fix-bugs
+
+# 一次性顺序执行多个任务集
+python run.py run MY_PROJECT fix-bugs migration refactor
+
+# 执行项目内所有任务集
+python run.py run MY_PROJECT --all
 ```
 
 ---
@@ -132,10 +138,20 @@ python run.py project archive FIX_CODE
 # 基本执行（使用项目默认 tool/model）
 python run.py run FIX_CODE code-quality-fix
 
+# 一次性顺序执行多个任务集
+python run.py run FIX_CODE code-quality-fix migration refactor
+
+# 执行项目内所有任务集（按 task_set_order 或字母序）
+python run.py run FIX_CODE --all
+
+# 多任务集 + 遇错停止（默认遇错继续执行下一个任务集）
+python run.py run FIX_CODE --all --stop-on-error
+
 # 指定工具和模型
 python run.py run FIX_CODE code-quality-fix --tool agent --model opus-4.6
 python run.py run FIX_CODE code-quality-fix --tool kimi
 python run.py run FIX_CODE code-quality-fix --tool copilot --model claude-opus-4.6
+python run.py run FIX_CODE code-quality-fix --tool opencode --model minimax/MiniMax-M2.5-highspeed
 
 # 只运行指定批次
 python run.py run FIX_CODE code-quality-fix --batch 1
@@ -301,7 +317,8 @@ python run.py run MY_PROJECT migration --batch 3
   "tasks": [
     { "task_no": "T-1", "cli": { "tool": "kimi" }, "..." : "..." },
     { "task_no": "T-2", "cli": { "tool": "agent", "model": "opus-4.6" }, "..." : "..." },
-    { "task_no": "T-3", "cli": { "tool": "copilot", "model": "claude-opus-4.6" }, "..." : "..." }
+    { "task_no": "T-3", "cli": { "tool": "copilot", "model": "claude-opus-4.6" }, "..." : "..." },
+    { "task_no": "T-4", "cli": { "tool": "opencode", "model": "minimax/MiniMax-M2.5-highspeed" }, "..." : "..." }
   ]
 }
 ```
@@ -315,6 +332,31 @@ python run.py run MY_PROJECT my-tasks
 # → 自动从上次中断的位置继续
 ```
 
+### 场景 6：多任务集顺序执行
+
+当项目中有多个任务集需要按顺序执行（如先修复、再迁移、最后重构）：
+
+```bash
+# 方式 1：显式指定执行顺序
+python run.py run MY_PROJECT fix-bugs migration refactor
+
+# 方式 2：使用 --all 执行所有任务集
+python run.py run MY_PROJECT --all
+
+# 方式 3：在 __init__.json 中配置 task_set_order 后使用 --all
+# __init__.json 中添加："task_set_order": ["fix-bugs", "migration", "refactor"]
+python run.py run MY_PROJECT --all
+
+# 遇到错误立即停止（默认会继续执行下一个任务集）
+python run.py run MY_PROJECT --all --stop-on-error
+
+# 先预览所有任务集
+python run.py dry-run MY_PROJECT --all
+```
+
+> 💡 **提示：** 多任务集执行时，每个任务集之间会显示进度分隔线和汇总面板。
+> 按 Ctrl+C 中断后，当前任务集的已完成任务状态会被保存，后续任务集不会执行。
+
 ### 场景 5：进程守护 / 后台长时间运行
 
 当需要在 supervisor、systemd 或 nohup 下运行时，使用 `--daemon` 模式：
@@ -323,23 +365,50 @@ python run.py run MY_PROJECT my-tasks
 # 显式指定 daemon 模式
 python run.py run MY_PROJECT my-tasks --delay 111-229 --daemon
 
+# 多任务集 + daemon 模式
+python run.py run MY_PROJECT --all --delay 111-229 --daemon
+
 # 自动检测：当 stdout 不是 TTY 时自动启用 daemon 模式
 # 所以在 supervisor / systemd / nohup 下不加 --daemon 也能正常工作
-nohup python run.py run MY_PROJECT my-tasks --delay 111-229 > task.log 2>&1 &
+nohup python run.py run MY_PROJECT --all --delay 111-229 > task.log 2>&1 &
 ```
+
+**Supervisor / systemd 配置关键说明：**
+
+Supervisor 和 systemd 使用极简环境启动进程，**不会加载你的 `.bashrc` / `.zshrc`**，
+因此 `kimi`、`agent`、`copilot`、`claude`、`opencode` 等 CLI 工具的路径不在默认 `PATH` 中，
+执行时会报 `Tool Not Found` 或 `command not found`。
+
+你需要先查出每个工具的完整路径，然后在配置中通过 `environment` 传入：
+
+```bash
+# 查询各 CLI 工具的安装路径
+which kimi       # 例如 /usr/local/bin/kimi
+which agent      # 例如 /home/deploy/.local/bin/agent
+which copilot    # 例如 /www/server/nodejs/v22.17.1/bin/copilot
+which claude     # 例如 /home/deploy/.local/bin/claude
+which opencode   # 例如 /usr/local/bin/opencode
+
+# 查询 Python 虚拟环境路径
+which python     # 确保是 venv 内的 python，例如 /path/to/auto-run-task/.task_env/bin/python
+```
+
+将上面得到的目录汇总到 `PATH` 中（取 `dirname` 部分），写入配置的 `environment` 字段。
 
 **Supervisor 配置示例：**
 
 ```ini
 [program:auto-task-runner]
-command=/path/to/venv/bin/python /path/to/run.py run MY_PROJECT my-tasks --delay 111-229
+command=/path/to/auto-run-task/.task_env/bin/python /path/to/auto-run-task/run.py run MY_PROJECT --all --delay 111-229
 directory=/path/to/auto-run-task
 autostart=true
 autorestart=false
 stdout_logfile=/var/log/auto-task-runner.log
 stderr_logfile=/var/log/auto-task-runner-err.log
-environment=PYTHONUNBUFFERED=1
 user=deploy
+; ⬇️ 关键：把 CLI 工具所在目录加入 PATH，否则会 Tool Not Found
+environment=PYTHONUNBUFFERED=1,HOME="/home/deploy",PATH="/www/server/nodejs/v22.17.1/bin:/home/deploy/.local/bin:/usr/local/bin:/usr/bin:/bin"
+; 如果工具需要代理访问，追加：HTTP_PROXY="http://127.0.0.1:7890",HTTPS_PROXY="http://127.0.0.1:7890"
 ```
 
 **systemd 配置示例：**
@@ -353,15 +422,24 @@ After=network.target
 Type=simple
 User=deploy
 WorkingDirectory=/path/to/auto-run-task
-ExecStart=/path/to/venv/bin/python run.py run MY_PROJECT my-tasks --delay 111-229
+ExecStart=/path/to/auto-run-task/.task_env/bin/python run.py run MY_PROJECT --all --delay 111-229
 Restart=no
-Environment=PYTHONUNBUFFERED=1
 StandardOutput=journal
 StandardError=journal
+; ⬇️ 关键：把 CLI 工具所在目录加入 PATH
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/deploy
+Environment=PATH=/www/server/nodejs/v22.17.1/bin:/home/deploy/.local/bin:/usr/local/bin:/usr/bin:/bin
+; 如果工具需要代理访问：
+; Environment=HTTP_PROXY=http://127.0.0.1:7890
+; Environment=HTTPS_PROXY=http://127.0.0.1:7890
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+> ⚠️ **常见问题：** 如果 `supervisorctl start` 后日志报 `Tool Not Found: copilot`，
+> 说明 `environment` 中的 `PATH` 缺少该工具所在目录。用 `which copilot` 查路径后补上即可。
 
 **Daemon 模式下的行为变化：**
 
@@ -395,6 +473,7 @@ WantedBy=multi-user.target
   "default_tool": "kimi",
   "default_model": "",
   "tags": ["code-quality"],
+  "task_set_order": ["code-quality-fix", "migration", "refactor"],
   "run_record": [
     {
       "run_at": "2024-06-01_10-00-00",
@@ -408,6 +487,11 @@ WantedBy=multi-user.target
     }
   ]
 }
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `task_set_order` | 可选。定义 `--all` 时的任务集执行顺序。未列出的任务集会按字母序追加到末尾。不配置则默认按字母序执行所有任务集。 |
 ```
 
 ### `.tasks.json` — 任务集

@@ -88,13 +88,14 @@ class ProjectConfig:
     default_tool: str = "kimi"
     default_model: str = ""
     tags: list[str] = field(default_factory=list)
+    task_set_order: list[str] = field(default_factory=list)
     run_record: list[RunRecord] = field(default_factory=list)
 
     # Internal: path to the project directory
     _project_dir: Path | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "project": self.project,
             "description": self.description,
             "workspace": self.workspace,
@@ -105,6 +106,9 @@ class ProjectConfig:
             "tags": self.tags,
             "run_record": [r.to_dict() for r in self.run_record],
         }
+        if self.task_set_order:
+            d["task_set_order"] = self.task_set_order
+        return d
 
     @classmethod
     def from_dict(cls, d: dict, project_dir: Path | None = None) -> "ProjectConfig":
@@ -118,6 +122,7 @@ class ProjectConfig:
             default_tool=d.get("default_tool", "kimi"),
             default_model=d.get("default_model", ""),
             tags=d.get("tags", []),
+            task_set_order=d.get("task_set_order", []),
             run_record=records,
             _project_dir=project_dir,
         )

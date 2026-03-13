@@ -1,11 +1,21 @@
 """
 Run command: orchestrate the full execution flow.
+
+Supports executing one or more task sets sequentially within a project.
 """
 
+import signal
+import time
 from datetime import datetime
 
 from ..config import get_tool_config
-from ..display import show_error, show_info
+from ..display import (
+    show_error,
+    show_info,
+    show_multi_task_set_header,
+    show_multi_task_set_summary,
+    show_task_set_divider,
+)
 from ..project import (
     RunRecord,
     add_run_record,
@@ -22,18 +32,171 @@ from ..runtime import (
     update_latest_symlink,
 )
 from ..scheduler import schedule_tasks
-from ..task_set import load_task_set
+from ..task_set import discover_task_sets, load_task_set
 
 
 def handle_run(args) -> int:
-    """Execute tasks in a project."""
-    return _execute(args, dry_run=False)
+    """Execute tasks in a project (one or more task sets)."""
+    return _dispatch(args, dry_run=False)
 
 
-def _execute(args, dry_run: bool = False) -> int:
-    """Shared execution logic for run and dry-run."""
+def _resolve_task_set_names(args, project_name: str) -> list[str] | None:
+    """Resolve the list of task set names from CLI args.
+
+    Returns a list of task set names, or None on error.
+    """
+    run_all = getattr(args, "run_all", False)
+    names = getattr(args, "task_set_names", []) or []
+
+    if not names and not run_all:
+        show_error(
+            "Please specify task set name(s) or use --all.\n"
+            "  Example: python run.py run PROJECT task1 task2\n"
+            "  Example: python run.py run PROJECT --all"
+        )
+        return None
+
+    if run_all:
+        # Load project to check task_set_order
+        try:
+            config = load_project(project_name)
+        except FileNotFoundError:
+            show_error(f"Project '{project_name}' not found!")
+            return None
+
+        project_dir = get_project_dir(project_name)
+        all_sets = discover_task_sets(project_dir)
+
+        if not all_sets:
+            show_error(f"No task sets found in project '{project_name}'!")
+            return None
+
+        # Use task_set_order if defined, otherwise alphabetical
+        if config.task_set_order:
+            ordered = []
+            for name in config.task_set_order:
+                if name in all_sets:
+                    ordered.append(name)
+                else:
+                    show_error(
+                        f"Task set '{name}' in task_set_order not found in project '{project_name}'!"
+                    )
+                    return None
+            # Append any discovered sets not listed in order
+            for name in all_sets:
+                if name not in ordered:
+                    ordered.append(name)
+            return ordered
+
+        return all_sets
+
+    # Validate specified names exist
+    project_dir = get_project_dir(project_name)
+    all_sets = discover_task_sets(project_dir)
+    for name in names:
+        if name not in all_sets:
+            show_error(
+                f"Task set '{name}' not found in project '{project_name}'!\n"
+                f"  Available: {', '.join(all_sets)}"
+            )
+            return None
+
+    return names
+
+
+def _dispatch(args, dry_run: bool = False) -> int:
+    """Resolve task sets and dispatch to single or multi execution."""
     project_name = args.project_name
-    task_set_name = args.task_set_name
+    task_set_names = _resolve_task_set_names(args, project_name)
+    if task_set_names is None:
+        return 1
+
+    if len(task_set_names) == 1:
+        return _execute_single(args, task_set_names[0], dry_run=dry_run)
+
+    return _execute_multi(args, task_set_names, dry_run=dry_run)
+
+
+def _execute_multi(args, task_set_names: list[str], dry_run: bool = False) -> int:
+    """Execute multiple task sets sequentially."""
+    project_name = args.project_name
+    stop_on_error = getattr(args, "stop_on_error", False)
+
+    # ── Daemon mode detection (must run before any display calls) ──
+    import sys as _sys
+
+    from ..display import auto_detect_daemon_mode, enable_daemon_mode
+
+    daemon = getattr(args, "daemon", False)
+    if daemon:
+        enable_daemon_mode()
+    elif not _sys.stdout.isatty():
+        auto_detect_daemon_mode()
+
+    # Show multi-task-set header
+    show_multi_task_set_header(task_set_names, project_name)
+
+    results: list[dict] = []
+    overall_start = time.time()
+    interrupted = False
+
+    for idx, ts_name in enumerate(task_set_names):
+        show_task_set_divider(idx + 1, len(task_set_names), ts_name)
+
+        ts_start = time.time()
+        interrupt_flag: list[bool] = []
+
+        try:
+            code = _execute_single(
+                args, ts_name, dry_run=dry_run, _interrupt_flag=interrupt_flag
+            )
+        except KeyboardInterrupt:
+            interrupted = True
+            code = 130
+            results.append({
+                "task_set_name": ts_name,
+                "code": code,
+                "elapsed": time.time() - ts_start,
+            })
+            break
+
+        ts_elapsed = time.time() - ts_start
+        results.append({
+            "task_set_name": ts_name,
+            "code": code,
+            "elapsed": ts_elapsed,
+        })
+
+        # Restore default signal handling between task sets so CTRL+C
+        # raises KeyboardInterrupt and SIGTERM terminates cleanly
+        # (executor installs its own handlers for both signals)
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+
+        # Stop if interrupted inside executor
+        if interrupt_flag:
+            interrupted = True
+            break
+
+        # Stop on error if requested
+        if stop_on_error and code != 0:
+            show_info(f"Stopping: task set '{ts_name}' failed (--stop-on-error)")
+            break
+
+    overall_elapsed = time.time() - overall_start
+    show_multi_task_set_summary(results, overall_elapsed, interrupted=interrupted)
+
+    return 0 if all(r["code"] == 0 for r in results) else 1
+
+
+def _execute_single(
+    args,
+    task_set_name: str,
+    dry_run: bool = False,
+    _interrupt_flag: list[bool] | None = None,
+) -> int:
+    """Execute a single task set. Core execution logic."""
+    project_name = args.project_name
 
     # ── Load project ──
     try:
@@ -102,7 +265,7 @@ def _execute(args, dry_run: bool = False) -> int:
     )
 
     if not scheduled:
-        show_info("No tasks to execute after filtering.")
+        show_info(f"No tasks to execute in '{task_set_name}' after filtering.")
         return 0
 
     # ── Resolve proxy ──
@@ -131,8 +294,6 @@ def _execute(args, dry_run: bool = False) -> int:
     daemon = getattr(args, "daemon", False)
 
     # ── Daemon / supervisor mode ──
-    # Explicit --daemon flag OR auto-detect when stdout is not a TTY
-    # (e.g. supervisord, systemd, nohup, piped output).
     import sys as _sys
 
     from ..display import auto_detect_daemon_mode, enable_daemon_mode, is_daemon_mode
@@ -143,7 +304,7 @@ def _execute(args, dry_run: bool = False) -> int:
         auto_detect_daemon_mode()
 
     if is_daemon_mode():
-        no_color = True  # force no-color in daemon mode
+        no_color = True
 
     if no_color:
         from ..display import console as _console
@@ -151,7 +312,7 @@ def _execute(args, dry_run: bool = False) -> int:
         _console.no_color = True
 
     if verbose:
-        heartbeat = min(heartbeat, 15)  # More frequent heartbeats in verbose mode
+        heartbeat = min(heartbeat, 15)
 
     # ── Create run context ──
     filters = {
@@ -198,7 +359,6 @@ def _execute(args, dry_run: bool = False) -> int:
 
     delay_range = parse_delay_range(getattr(args, "delay", None))
 
-    # Resolve per-task timeout
     from ..config import MAX_EXECUTION_SECONDS
 
     cli_timeout = getattr(args, "timeout", None)
@@ -235,6 +395,10 @@ def _execute(args, dry_run: bool = False) -> int:
     )
 
     result_code = executor.run()
+
+    # Propagate interrupt flag to caller
+    if _interrupt_flag is not None and executor.interrupted:
+        _interrupt_flag.append(True)
 
     # ── Save run summary ──
     results = executor.get_results()

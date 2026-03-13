@@ -51,7 +51,14 @@ from .projects import (
 )
 
 # ─── Summary / progress ──────────────────────────────────────────
-from .summary import show_all_done, show_progress_bar, show_summary
+from .summary import (
+    show_all_done,
+    show_multi_task_set_header,
+    show_multi_task_set_summary,
+    show_progress_bar,
+    show_summary,
+    show_task_set_divider,
+)
 
 # ─── Task display ────────────────────────────────────────────────
 from .tasks import (
@@ -107,6 +114,8 @@ __all__ = [
     "show_run_history",
     "show_schedule_plan",
     # Summary
+    "show_multi_task_set_header",
+    "show_multi_task_set_summary",
     "show_summary",
     "show_task_cmd",
     # Tasks
@@ -116,6 +125,7 @@ __all__ = [
     "show_task_prompt_info",
     "show_task_result",
     "show_task_running",
+    "show_task_set_divider",
     "show_task_set_list",
     "show_task_skip",
     "show_task_start",

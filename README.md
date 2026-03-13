@@ -20,7 +20,7 @@
 
 - 📁 **项目化架构** — 以项目为中心，支持多任务集、运行历史、模板管理
 - 🔧 **多工具支持** — kimi / agent (Claude Code) / copilot / claude，一键切换
-- 🤖 **多模型选择** — 项目级、任务集级、任务级可独立配置 tool/model
+- 🤖 **多模型选择** — 项目级、任务集级、任务级可独立配置 tool/model（opencode 使用 provider/model 格式）
 - 📋 **结构化任务集** — `.tasks.json` 定义任务，`{{key}}` + `#item` 模板渲染
 - 🗂️ **运行时管理** — 每次运行自动创建运行目录、备份任务集、记录历史
 - 🎯 **智能调度** — batch + priority 排序，依赖验证，支持过滤和重试
@@ -28,7 +28,8 @@
 - 🎨 **丰富终端** — Rich 面板、进度条、心跳动画、项目仪表板
 - 🌐 **代理自动控制** — kimi 免代理，其他工具自动启用代理
 - 🔄 **断点续跑** — 状态实时持久化，中断后从上次位置继续
-- 🛡️ **健壮可靠** — PTY 色彩保留、原子写入、优雅信号处理、git 安全标签
+- � **多任务集顺序执行** — `--all` 或显式指定多个任务集，支持 `task_set_order` 自定义顺序
+- �🛡️ **健壮可靠** — PTY 色彩保留、原子写入、优雅信号处理、git 安全标签
 - ⏱️ **防误标** — AI CLI 执行低于 10s 自动标记失败（防止空跑）
 - 🕐 **防封号** — 任务间随机延时（默认 60-120s），降低被检测为机器人的风险
 - � **进程守护** — 支持 supervisor / systemd / nohup，自动检测非 TTY 环境或 `--daemon` 显式启用
@@ -49,7 +50,9 @@ python run.py project create MY_PROJECT --workspace /path/to/repo
 
 # 4. 执行
 python run.py dry-run MY_PROJECT my-tasks   # 预览
-python run.py run MY_PROJECT my-tasks       # 执行
+python run.py run MY_PROJECT my-tasks       # 执行单个任务集
+python run.py run MY_PROJECT --all           # 执行所有任务集
+python run.py run MY_PROJECT ts1 ts2 ts3     # 顺序执行多个任务集
 ```
 
 **完整操作指引、命令示例与典型工作流** → [用户操作指南](docs/USER_GUIDE.md)
@@ -65,8 +68,8 @@ python run.py run MY_PROJECT my-tasks       # 执行
 | `project info` | 查看项目详情 |
 | `project validate` | 校验项目结构 |
 | `project archive` | 归档项目 |
-| `run` | 执行任务 |
-| `dry-run` | 预览模式（只生成 prompt 不执行） |
+| `run` | 执行任务（支持单个、多个或 `--all` 全部任务集） |
+| `dry-run` | 预览模式（支持单个、多个或 `--all`） |
 | `reset` | 重置任务状态（用于重跑） |
 | `list` | 列出任务集/任务 |
 | `status` | 项目状态仪表板 |
@@ -81,6 +84,7 @@ python run.py run MY_PROJECT my-tasks       # 执行
 | `agent`   | `opus-4.6`        | ✓        | Claude Code Agent CLI   |
 | `copilot` | `claude-opus-4.6` | ✓        | GitHub Copilot CLI      |
 | `claude`  | 固定              | ✓        | Claude CLI（单模型）    |
+| `opencode`| `minimax-cn-coding-plan/MiniMax-M2.5-highspeed` | ✗ | OpenCode CLI（多 provider） |
 
 ---
 
@@ -106,6 +110,7 @@ auto-run-task/
 
 - **`{{key}}`** — 模板占位符，替换为 `task[key]` 的值
 - **`#item`** — 替换为整个任务对象的 JSON
+- **`task_set_order`** — 在 `__init__.json` 中定义 `--all` 时的任务集执行顺序
 - **任务字段** — `task_no`, `task_name`, `batch`, `priority`, `status`, `depends_on`, `cli.tool`, `cli.model` 等
 
 详见 [用户操作指南 - 数据结构](docs/USER_GUIDE.md#数据结构详解)。
