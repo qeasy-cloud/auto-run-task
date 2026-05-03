@@ -35,7 +35,7 @@ class TestRenderPromptKeyPlaceholders:
         assert result == "Priority: 10"
 
     def test_dict_value_serialized_as_json(self):
-        task = {**SIMPLE_TASK, "cli": {"tool": "copilot", "model": "claude-opus-4.6"}}
+        task = {**SIMPLE_TASK, "cli": {"tool": "copilot", "model": "gpt-5.5"}}
         template = "CLI: {{cli}}"
         result = render_prompt(template, task)
         parsed = json.loads(result.replace("CLI: ", ""))
@@ -66,7 +66,7 @@ class TestRenderPromptItemPlaceholder:
 
     def test_item_strips_cli_field(self):
         """'cli' config must be excluded from #item — it can confuse AI models."""
-        task = {**SIMPLE_TASK, "cli": {"tool": "copilot", "model": "claude-opus-4.6"}}
+        task = {**SIMPLE_TASK, "cli": {"tool": "copilot", "model": "gpt-5.5"}}
         result = render_prompt("#item", task)
         data = json.loads(result)
         assert "cli" not in data

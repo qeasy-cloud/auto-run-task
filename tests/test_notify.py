@@ -375,14 +375,14 @@ class TestBuildTaskFailureMessage:
             failure_reason="exit code 1",
             elapsed="3m 20s",
             tool="copilot",
-            model="claude-opus-4.6",
+            model="gpt-5.5",
             return_code=1,
             output_tail="Traceback...",
             log_file="runtime/20260228/logs/M18.log",
         )
         assert "❌" in msg
         assert "copilot" in msg
-        assert "claude-opus-4.6" in msg
+        assert "gpt-5.5" in msg
         assert "退出码" in msg
         assert "最终结果输出" in msg
 
@@ -423,7 +423,7 @@ class TestBuildTaskCompleteMessage:
             task_name="会计要素建模",
             elapsed="4m 18s",
             tool="copilot",
-            model="claude-opus-4.6",
+            model="gpt-5.5",
             return_code=0,
             progress_done=3,
             progress_total=10,
@@ -436,7 +436,7 @@ class TestBuildTaskCompleteMessage:
         )
         assert "✅" in msg
         assert "copilot" in msg
-        assert "claude-opus-4.6" in msg
+        assert "gpt-5.5" in msg
         assert "3/10" in msg
         assert "最终结果输出" in msg
         assert "下一任务预告" in msg
@@ -452,7 +452,7 @@ class TestBuildTaskCompleteMessage:
             task_name="超长输出测试",
             elapsed="9m 12s",
             tool="copilot",
-            model="claude-opus-4.6",
+            model="gpt-5.5",
             return_code=0,
             progress_done=9,
             progress_total=10,

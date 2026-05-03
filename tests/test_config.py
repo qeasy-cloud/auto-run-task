@@ -31,7 +31,23 @@ class TestToolConfig:
         cfg = TOOL_CONFIGS["copilot"]
         assert cfg.needs_proxy is True
         assert cfg.supports_model is True
-        assert cfg.default_model is not None
+        assert cfg.default_model == "gpt-5.5"
+        assert cfg.models == [
+            "auto",
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.3-codex",
+            "gpt-5.2-codex",
+            "gpt-5.2",
+            "gpt-5.4-mini",
+            "gpt-5-mini",
+            "gpt-4.1",
+            "claude-sonnet-4.6",
+            "claude-sonnet-4.5",
+            "claude-haiku-4.5",
+            "claude-opus-4.7",
+            "claude-sonnet-4",
+        ]
 
     def test_claude_no_model_support(self):
         cfg = TOOL_CONFIGS["claude"]

@@ -150,7 +150,7 @@ python run.py run FIX_CODE --all --stop-on-error
 # 指定工具和模型
 python run.py run FIX_CODE code-quality-fix --tool agent --model opus-4.6
 python run.py run FIX_CODE code-quality-fix --tool kimi
-python run.py run FIX_CODE code-quality-fix --tool copilot --model claude-opus-4.6
+python run.py run FIX_CODE code-quality-fix --tool copilot --model gpt-5.5
 python run.py run FIX_CODE code-quality-fix --tool opencode --model minimax/MiniMax-M2.5-highspeed
 
 # 只运行指定批次
@@ -317,7 +317,7 @@ python run.py run MY_PROJECT migration --batch 3
   "tasks": [
     { "task_no": "T-1", "cli": { "tool": "kimi" }, "..." : "..." },
     { "task_no": "T-2", "cli": { "tool": "agent", "model": "opus-4.6" }, "..." : "..." },
-    { "task_no": "T-3", "cli": { "tool": "copilot", "model": "claude-opus-4.6" }, "..." : "..." },
+    { "task_no": "T-3", "cli": { "tool": "copilot", "model": "gpt-5.5" }, "..." : "..." },
     { "task_no": "T-4", "cli": { "tool": "opencode", "model": "minimax/MiniMax-M2.5-highspeed" }, "..." : "..." }
   ]
 }
@@ -508,7 +508,7 @@ WantedBy=multi-user.target
       "priority": 10,
       "status": "not-started",
       "depends_on": null,
-      "cli": { "tool": "copilot", "model": "claude-opus-4.6" }
+      "cli": { "tool": "copilot", "model": "gpt-5.5" }
     }
   ]
 }

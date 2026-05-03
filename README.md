@@ -82,7 +82,7 @@ python run.py run MY_PROJECT ts1 ts2 ts3     # 顺序执行多个任务集
 | --------- | ----------------- | -------- | ----------------------- |
 | `kimi`    | —                 | ✗        | Kimi AI CLI（默认工具） |
 | `agent`   | `opus-4.6`        | ✓        | Claude Code Agent CLI   |
-| `copilot` | `claude-opus-4.6` | ✓        | GitHub Copilot CLI      |
+| `copilot` | `gpt-5.5`         | ✓        | GitHub Copilot CLI      |
 | `claude`  | 固定              | ✓        | Claude CLI（单模型）    |
 | `opencode`| `minimax-cn-coding-plan/MiniMax-M2.7-highspeed` | ✗ | OpenCode CLI（多 provider） |
 
