@@ -40,6 +40,7 @@ TOOL_CONFIGS: dict[str, ToolConfig] = {
         models=[
             "auto",
             "composer-2",
+            "composer-2.5",
             "composer-1.5",
             "composer-1",
             "gpt-5.3-codex",
