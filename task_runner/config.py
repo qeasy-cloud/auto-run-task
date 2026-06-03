@@ -33,7 +33,7 @@ TOOL_CONFIGS: dict[str, ToolConfig] = {
     ),
     "agent": ToolConfig(
         name="agent",
-        cmd_template='agent --print -f --trust --model {model} "$(cat {task_file})"',
+        cmd_template='agent --print -f --trust --model {model} -- "$(cat {task_file})"',
         needs_proxy=True,
         supports_model=True,
         default_model="opus-4.6",
@@ -85,14 +85,14 @@ TOOL_CONFIGS: dict[str, ToolConfig] = {
     ),
     "claude": ToolConfig(
         name="claude",
-        cmd_template='claude --print --permission-mode bypassPermissions -p "$(cat {task_file})"',
+        cmd_template='claude --print --permission-mode bypassPermissions -- "$(cat {task_file})"',
         needs_proxy=True,
         supports_model=False,
         description="Claude CLI (claude-opus-4-6 only) — 需要代理",
     ),
     "opencode": ToolConfig(
         name="opencode",
-        cmd_template='opencode run --model {model} "$(cat {task_file})"',
+        cmd_template='opencode run --model {model} -- "$(cat {task_file})"',
         needs_proxy=False,
         supports_model=True,
         default_model="minimax-cn-coding-plan/MiniMax-M2.7-highspeed",
