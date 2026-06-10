@@ -26,7 +26,7 @@ class ToolConfig:
 TOOL_CONFIGS: dict[str, ToolConfig] = {
     "kimi": ToolConfig(
         name="kimi",
-        cmd_template='kimi --quiet --yolo -p "$(cat {task_file})"',
+        cmd_template='kimi -p "$(cat {task_file})"',
         needs_proxy=False,
         supports_model=False,
         description="Kimi AI CLI (Moonshot) — 默认工具，无需代理",
@@ -79,6 +79,7 @@ TOOL_CONFIGS: dict[str, ToolConfig] = {
             "claude-sonnet-4.5",
             "claude-haiku-4.5",
             "claude-opus-4.7",
+            "claude-opus-4.8",
             "claude-sonnet-4",
         ],
         description="GitHub Copilot CLI — 需要代理",
