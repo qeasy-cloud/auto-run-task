@@ -20,8 +20,37 @@ import sys
 from pathlib import Path
 
 
+def _configure_io():
+    """Reconfigure stdout/stderr to UTF-8 so Unicode glyphs (ℹ️ ❌ ⚠️) print on Windows.
+
+    Default Windows code page is GBK / cp936, which can't encode many Unicode
+    characters used in this CLI. Setting ``PYTHONIOENCODING`` before launch also
+    works, but doing it here keeps things working out of the box.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            # Streams may already be closed or not re-configurable (e.g. piped
+            # binaries). Fall back to a best-effort wrap.
+            try:
+                import io
+
+                if hasattr(stream, "buffer"):
+                    new_stream = io.TextIOWrapper(
+                        stream.buffer, encoding="utf-8", errors="replace"
+                    )
+                    if stream is sys.stdout:
+                        sys.stdout = new_stream
+                    else:
+                        sys.stderr = new_stream
+            except Exception:
+                pass
+
+
 def check_dependencies():
     """Ensure required packages are installed before importing anything else."""
+    _configure_io()
     try:
         import rich  # noqa: F401
     except ImportError:
